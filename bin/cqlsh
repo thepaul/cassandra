@@ -1014,10 +1014,109 @@ class Shell(cmd.Cmd):
             cmd.Cmd.do_help(self, cql_dequote(t).lower())
 
     def help_types(self):
-        self.printout("CQL types recognized by this version of cqlsh:\n")
+        self.printout("\n        CQL types recognized by this version of cqlsh:\n")
         for t in cqlhandling.cql_types:
-            self.printout('  ' + t)
-        self.printout('')
+            self.printout('          ' + t)
+        print """
+        For information on the various recognizable input formats for these
+        types, or on controlling the formatting of cqlsh query output, see
+        one of the following topics:
+
+          HELP TIMESTAMP_INPUT
+          HELP BLOB_INPUT
+          HELP UUID_INPUT
+          HELP BOOLEAN_INPUT
+
+          HELP TEXT_OUTPUT
+          HELP TIMESTAMP_OUTPUT
+        """
+
+    def help_timestamp_input(self):
+        print """
+        Timestamp input
+
+        CQL supports any of the following ISO 8601 formats for timestamp
+        specification:
+
+          yyyy-mm-dd HH:mm
+          yyyy-mm-dd HH:mm:ss
+          yyyy-mm-dd HH:mmZ
+          yyyy-mm-dd HH:mm:ssZ
+          yyyy-mm-dd'T'HH:mm
+          yyyy-mm-dd'T'HH:mmZ
+          yyyy-mm-dd'T'HH:mm:ss
+          yyyy-mm-dd'T'HH:mm:ssZ
+          yyyy-mm-dd
+          yyyy-mm-ddZ
+
+        The Z in these formats refers to an RFC-822 4-digit time zone,
+        expressing the time zone's difference from UTC. For example, a
+        timestamp in Pacific Standard Time might be given thus:
+
+          2012-01-20 16:14:12-0800
+
+        If no time zone is supplied, the current time zone for the Cassandra
+        server node will be used.
+        """
+
+    def help_blob_input(self):
+        print """
+        Blob input
+
+        CQL blob data must be specified in a string literal as hexidecimal
+        data. Example: to store the ASCII values for the characters in the
+        string "CQL", use '43514c'.
+        """
+
+    def help_uuid_input(self):
+        print """
+        UUID input
+
+        UUIDs may be specified in CQL using 32 hexidecimal characters,
+        split up using dashes in the standard UUID format:
+
+          XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+        """
+
+    def help_boolean_input(self):
+        print """
+        Boolean input
+
+        CQL accepts the strings 'true' and 'false' (case insensitive)
+        as input for boolean types.
+        """
+
+    def help_text_output(self):
+        print """
+        Textual output
+
+        When control characters, or other characters which can't be encoded
+        in your current locale, are found in values of 'text' or 'ascii'
+        types, it will be shown as a backslash escape. If color is enabled,
+        any such backslash escapes will be shown in a different color from
+        the surrounding text.
+
+        Unicode code points in your data will be output intact, if the
+        encoding for your locale is capable of decoding them. If you prefer
+        that non-ascii characters be shown with Python-style "\\uABCD"
+        escape sequences, invoke cqlsh with an ASCII locale (for example,
+        by setting the $LANG environment variable to "C").
+        """
+
+    help_ascii_output = help_text_output
+
+    def help_timestamp_output(self):
+        print """
+        Timestamp output
+
+        Cqlsh will display timestamps in this format:
+
+          yyyy-mm-dd HH:mm:ssZ
+
+        which is a format acceptable as CQL timestamp input as well. It is
+        planned that cqlsh should allow the user to change that output format
+        if desired, but that feature is not yet available.
+        """
 
     def help_select_expr(self):
         print """
