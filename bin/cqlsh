@@ -127,6 +127,7 @@ cqlhandling.commands_end_with_newline.update((
     'desc',
     'show',
     'assume',
+    'source',
     'exit',
     'quit'
 ))
@@ -138,6 +139,7 @@ cqlhandling.CqlRuleSet.append_rules(r'''
 <specialCommand> ::= <describeCommand>
                    | <showCommand>
                    | <assumeCommand>
+                   | <sourceCommand>
                    | <helpCommand>
                    | <exitCommand>
                    ;
@@ -159,6 +161,9 @@ cqlhandling.CqlRuleSet.append_rules(r'''
 <assumeTypeDef> ::= "NAMES" "ARE" names=<storageType>
                   | "VALUES" "ARE" values=<storageType>
                   | "(" colname=<name> ")" "VALUES" "ARE" colvalues=<storageType>
+                  ;
+
+<sourceCommand> ::= "SOURCE" fname=<stringLiteral>
                   ;
 
 <helpCommand> ::= ( "HELP" | "?" ) [topic]=( <identifier> | <stringLiteral> )*
@@ -205,6 +210,24 @@ def complete_assume_col(ctxt, cqlsh):
     cols = [cm.name for cm in cfdef.column_metadata]
     cols.append(cfdef.key_alias or 'KEY')
     return map(maybe_cql_escape, cols)
+
+@cqlhandling.cql_add_completer('sourceCommand', 'fname')
+def complete_source_quoted_filename(ctxt, cqlsh):
+    partial = ctxt.get_binding('partial', '')
+    head, tail = os.path.split(partial)
+    exhead = os.path.expanduser(head)
+    try:
+        contents = os.listdir(exhead or '.')
+    except OSError:
+        return ()
+    matches = filter(lambda f: f.startswith(tail), contents)
+    annotated = []
+    for f in matches:
+        match = os.path.join(head, f)
+        if os.path.isdir(os.path.join(exhead, f)):
+            match += '/'
+        annotated.append(match)
+    return annotated
 
 class NoKeyspaceError(Exception):
     pass
@@ -322,14 +345,18 @@ class Shell(cmd.Cmd):
     num_retries = 4
     show_line_nums = False
     debug = False
+    stop = False
 
     def __init__(self, hostname, port, color=False, username=None,
                  password=None, encoding=None, stdin=None, tty=True,
-                 completekey='tab'):
+                 completekey='tab', use_conn=None):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
-        self.conn = cql.connect(hostname, port, user=username, password=password)
+        if use_conn is not None:
+            self.conn = use_conn
+        else:
+            self.conn = cql.connect(hostname, port, user=username, password=password)
         self.cursor = self.conn.cursor()
 
         self.current_keyspace = None
@@ -542,15 +569,19 @@ class Shell(cmd.Cmd):
         input and an actual EOF.
         """
         with self.prepare_loop():
-            while True:
+            while not self.stop:
                 try:
                     line = self.get_input_line(self.prompt)
+                    self.statement.write(line)
+                    if self.onecmd(self.statement.getvalue()):
+                        self.reset_statement()
                 except EOFError:
                     self.handle_eof()
-                    continue
-                self.statement.write(line)
-                if self.onecmd(self.statement.getvalue()):
+                except cql.Error, cqlerr:
+                    self.printerr(str(cqlerr))
+                except KeyboardInterrupt:
                     self.reset_statement()
+                    print
 
     def onecmd(self, statement):
         """
@@ -1058,13 +1089,47 @@ class Shell(cmd.Cmd):
             self.add_assumption(params['ks'], params['cf'], params['colname'],
                                 overridetype, validator_class)
 
+    def do_source(self, parsed):
+        """
+        SOURCE [cqlsh only]
+
+        Executes a file containing CQL statements. Gives the output for each
+        statement in turn, if any, or any errors that occur along the way.
+
+        Errors do NOT abort execution of the CQL source file.
+
+        Usage:
+
+          SOURCE '<file>';
+
+        That is, the path to the file to be executed must be given inside a
+        string literal. The path is interpreted relative to the current working
+        directory. The tilde shorthand notation ("~/mydir") is supported for
+        referring to $HOME.
+
+        See also the --file option to cqlsh.
+        """
+
+        fname = parsed.get_binding('fname')
+        fname = os.path.expanduser(cql_dequote(fname))
+        try:
+            f = open(fname, 'r')
+        except IOError, e:
+            self.printerr('Could not open %r: %s' % (fname, e))
+            return
+        subshell = Shell(self.hostname, self.port, color=self.color,
+                         encoding=self.encoding, stdin=f, tty=False,
+                         use_conn=self.conn)
+        subshell.cmdloop()
+        f.close()
+
     def do_exit(self, parsed=None):
         """
         EXIT/QUIT [cqlsh only]
 
         Exits cqlsh.
         """
-        sys.exit()
+        self.stop = True
     do_quit = do_exit
 
     def get_names(self):
@@ -1851,24 +1916,10 @@ def main(options, hostname, port):
     if options.debug:
         shell.debug = True
 
-    while True:
-        try:
-            shell.cmdloop()
-        except SystemExit:
-            if readline is not None:
-                readline.write_history_file(HISTORY)
-            break
-        except cql.Error, cqlerr:
-            shell.printerr(str(cqlerr))
-        except KeyboardInterrupt:
-            shell.reset_statement()
-            print
-        except Exception, err:
-            if options.debug:
-                import traceback
-                traceback.print_exc()
-            else:
-                shell.printerr("Exception: %s" % err)
+    shell.cmdloop()
+
+    if readline is not None:
+        readline.write_history_file(HISTORY)
 
 if __name__ == '__main__':
     main(*read_options(sys.argv[1:], os.environ))
