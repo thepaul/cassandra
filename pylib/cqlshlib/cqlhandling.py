@@ -556,8 +556,8 @@ syntax_rules += r'''
 <createColumnFamilyStatement> ::= "CREATE" "COLUMNFAMILY" cf=<name>
                                     "(" keyalias=<colname> <storageType> "PRIMARY" "KEY"
                                         ( "," colname=<colname> <storageType> )* ")"
-                                   ( "WITH" [cfopt]=<identifier> "=" [optval]=<cfOptionVal>
-                                     ( "AND" [cfopt]=<identifier> "=" [optval]=<cfOptionVal> )* )?
+                                   ( "WITH" [cfopt]=<optionName> "=" [optval]=<cfOptionVal>
+                                     ( "AND" [cfopt]=<optionName> "=" [optval]=<cfOptionVal> )* )?
                                 ;
 <cfOptionVal> ::= <storageType>
                 | <identifier>
