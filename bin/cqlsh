@@ -780,6 +780,7 @@ class Shell(cmd.Cmd):
         formatted_data = [map(self.myformat_value, row, coltypes) for row in self.cursor]
 
         # determine column widths
+        colnames = map(str, colnames)
         widths = map(len, colnames)
         for fmtrow in formatted_data:
             for num, col in enumerate(fmtrow):
