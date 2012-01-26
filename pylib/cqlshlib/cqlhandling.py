@@ -627,6 +627,8 @@ syntax_rules += r'''
 <alterInstructions> ::= "ALTER" existcol=<name> "TYPE" <storageType>
                       | "ADD" newcol=<name> <storageType>
                       | "DROP" existcol=<name>
+                      | "WITH" [optname]=<optionName> "=" [optval]=<cfOptionVal>
+                        ( "AND" [optname]=<optionName> "=" [optval]=<cfOptionVal> )*
                       ;
 '''
 
@@ -639,7 +641,12 @@ def alter_table_col_completer(ctxt, cass):
     cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
     return map(maybe_cql_escape, [md.name for md in cfdef.column_metadata])
 
+@completer_for('alterInstructions', 'optname')
+def alter_cf_with_option_completer(ctxt, cass):
+    return [c[0] for c in columnfamily_options]
+
 explain_completion('alterInstructions', 'newcol', '<new_column_name>')
+explain_completion('alterInstructions', 'optval', '<option_value>')
 
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 
