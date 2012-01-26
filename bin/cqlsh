@@ -879,6 +879,10 @@ class Shell(cmd.Cmd):
             else:
                 optval = cql_escape(optval)
             notable_columns.append((option, optval))
+        for (option, thriftname) in cqlhandling.columnfamily_map_options:
+            optmap = getattr(cfdef, thriftname or option)
+            for k, v in optmap:
+                notable_columns.append(('%s:%s' % (option, k), cql_escape(v)))
         out.write('\n)')
         if notable_columns:
             joiner = 'WITH'

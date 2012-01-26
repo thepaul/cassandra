@@ -40,6 +40,11 @@ columnfamily_options = (
     ('replicate_on_write', None)
 )
 
+columnfamily_map_options = (
+    ('compaction_strategy_options', None),
+    ('compression_parameters', 'compression_options'),
+)
+
 cql_type_to_apache_class = {
     'ascii': 'AsciiType',
     'bigint': 'LongType',
@@ -574,7 +579,8 @@ explain_completion('createColumnFamilyStatement', 'optval', '<option_value>')
 
 @completer_for('createColumnFamilyStatement', 'cfopt')
 def create_cf_option_completer(ctxt, cass):
-    return [c[0] for c in columnfamily_options]
+    return [c[0] for c in columnfamily_options] + \
+           [c[0] + ':' for c in columnfamily_map_options]
 
 syntax_rules += r'''
 <createIndexStatement> ::= "CREATE" "INDEX" indexname=<identifier>? "ON"
@@ -643,7 +649,8 @@ def alter_table_col_completer(ctxt, cass):
 
 @completer_for('alterInstructions', 'optname')
 def alter_cf_with_option_completer(ctxt, cass):
-    return [c[0] for c in columnfamily_options]
+    return [c[0] for c in columnfamily_options] + \
+           [c[0] + ':' for c in columnfamily_map_options]
 
 explain_completion('alterInstructions', 'newcol', '<new_column_name>')
 explain_completion('alterInstructions', 'optval', '<option_value>')
