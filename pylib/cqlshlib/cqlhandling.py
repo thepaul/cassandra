@@ -93,8 +93,9 @@ def is_valid_cql_word(s):
 def tokenize_cql(cql_text):
     return CqlLexotron.scan(cql_text)[0]
 
-def cql_detokenize(toklist):
-    return ' '.join([t[1] for t in toklist])
+def cql_extract_orig(toklist, srcstr):
+    # low end of span for first token, to high end of span for last token
+    return srcstr[toklist[0][2][0]:toklist[-1][2][1]]
 
 # note: commands_end_with_newline may be extended by an importing module.
 commands_end_with_newline = set()
@@ -674,13 +675,10 @@ def cql_add_completer(rulename, symname):
 def cql_parse(text, startsymbol='Start'):
     tokens = CqlRuleSet.lex(text)
     tokens = cql_massage_tokens(tokens)
-    return cql_parse_tokens(tokens, startsymbol)
+    return CqlRuleSet.parse(startsymbol, tokens, init_bindings={'*SRC*': text})
 
-def cql_parse_tokens(toklist, startsymbol='Start'):
-    return CqlRuleSet.parse(startsymbol, toklist)
-
-def cql_whole_parse_tokens(toklist, startsymbol='Start'):
-    return CqlRuleSet.whole_match(startsymbol, toklist)
+def cql_whole_parse_tokens(toklist, srcstr=None, startsymbol='Start'):
+    return CqlRuleSet.whole_match(startsymbol, toklist, srcstr=srcstr)
 
 def cql_massage_tokens(toklist):
     curstmt = []
@@ -691,7 +689,7 @@ def cql_massage_tokens(toklist):
     for t in toklist:
         if t[0] == 'endline':
             if term_on_nl:
-                t = ('endtoken', '\n')
+                t = ('endtoken',) + t[1:]
             else:
                 # don't put any 'endline' tokens in output
                 continue
@@ -782,6 +780,7 @@ def cql_complete_single(text, partial, init_bindings={}, ignore_case=True, start
     if tokens and tokens[-1][0] == 'unclosedComment':
         return []
     bindings['partial'] = partial
+    bindings['*SRC*'] = text
 
     # find completions for the position
     completions = CqlRuleSet.complete(startsymbol, tokens, bindings)
