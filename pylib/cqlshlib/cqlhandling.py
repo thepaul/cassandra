@@ -27,22 +27,43 @@ columnfamily_options = (
     # (CQL option name, Thrift option name (or None if same))
     ('comment', None),
     ('comparator', 'comparator_type'),
-    ('row_cache_provider', None),
-    ('key_cache_size', None),
-    ('row_cache_size', None),
     ('read_repair_chance', None),
     ('gc_grace_seconds', None),
     ('default_validation', 'default_validation_class'),
     ('min_compaction_threshold', None),
     ('max_compaction_threshold', None),
-    ('row_cache_save_period_in_seconds', None),
-    ('key_cache_save_period_in_seconds', None),
-    ('replicate_on_write', None)
+    ('replicate_on_write', None),
+    ('compaction_strategy_class', 'compaction_strategy'),
 )
 
+obsolete_cf_options = (
+    ('key_cache_size', None),
+    ('row_cache_size', None),
+    ('row_cache_save_period_in_seconds', None),
+    ('key_cache_save_period_in_seconds', None),
+    ('memtable_throughput_in_mb', None),
+    ('memtable_operations_in_millions', None),
+    ('memtable_flush_after_mins', None),
+    ('row_cache_provider', None),
+)
+
+all_columnfamily_options = columnfamily_options + obsolete_cf_options
+
 columnfamily_map_options = (
-    ('compaction_strategy_options', None),
-    ('compression_parameters', 'compression_options'),
+    ('compaction_strategy_options', None,
+        ()),
+    ('compression_parameters', 'compression_options',
+        ('sstable_compression', 'chunk_length_kb', 'crc_check_chance')),
+)
+
+available_compression_classes = (
+    'DeflateCompressor',
+    'SnappyCompressor',
+)
+
+available_compaction_classes = (
+    'LeveledCompactionStrategy',
+    'SizeTieredCompactionStrategy'
 )
 
 cql_type_to_apache_class = {
@@ -191,7 +212,8 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 <float> ::=         /-?[0-9]+\.[0-9]+/ ;
 <integer> ::=       /-?[0-9]+/ ;
 <uuid> ::=          /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ ;
-<identifier> ::=    /[a-z][a-z0-9_:]*/ ;
+<identifier> ::=    /[a-z][a-z0-9_]*/ ;
+<colon> ::=         ":" ;
 <star> ::=          "*" ;
 <range> ::=         ".." ;
 <endtoken> ::=      ";" ;
@@ -562,11 +584,14 @@ syntax_rules += r'''
 <createColumnFamilyStatement> ::= "CREATE" "COLUMNFAMILY" cf=<name>
                                     "(" keyalias=<colname> <storageType> "PRIMARY" "KEY"
                                         ( "," colname=<colname> <storageType> )* ")"
-                                   ( "WITH" [cfopt]=<optionName> "=" [optval]=<cfOptionVal>
-                                     ( "AND" [cfopt]=<optionName> "=" [optval]=<cfOptionVal> )* )?
+                                   ( "WITH" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal>
+                                     ( "AND" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal> )* )?
                                 ;
-<cfOptionVal> ::= <storageType>
-                | <identifier>
+
+<cfOptionName> ::= cfoptname=<identifier> ( cfoptsep=":" cfsubopt=( <identifier> | <integer> ) )?
+                 ;
+
+<cfOptionVal> ::= <identifier>
                 | <stringLiteral>
                 | <integer>
                 | <float>
@@ -576,12 +601,67 @@ syntax_rules += r'''
 explain_completion('createColumnFamilyStatement', 'keyalias', '<new_key_alias>')
 explain_completion('createColumnFamilyStatement', 'cf', '<new_columnfamily_name>')
 explain_completion('createColumnFamilyStatement', 'colname', '<new_column_name>')
-explain_completion('createColumnFamilyStatement', 'optval', '<option_value>')
 
-@completer_for('createColumnFamilyStatement', 'cfopt')
+@completer_for('cfOptionName', 'cfoptname')
 def create_cf_option_completer(ctxt, cass):
     return [c[0] for c in columnfamily_options] + \
            [c[0] + ':' for c in columnfamily_map_options]
+
+@completer_for('cfOptionName', 'cfoptsep')
+def create_cf_suboption_separator(ctxt, cass):
+    opt = ctxt.get_binding('cfoptname')
+    if any(opt == c[0] for c in columnfamily_map_options):
+        return [':']
+    return ()
+
+@completer_for('cfOptionName', 'cfsubopt')
+def create_cf_suboption_completer(ctxt, cass):
+    opt = ctxt.get_binding('cfoptname')
+    if opt == 'compaction_strategy_options':
+        # try to determine the strategy class in use
+        prevopts = ctxt.get_binding('cfopt', ())
+        prevvals = ctxt.get_binding('optval', ())
+        for prevopt, prevval in zip(prevopts, prevvals):
+            if prevopt == 'compaction_strategy_class':
+                csc = cql_dequote(prevval)
+                break
+        else:
+            cf = ctxt.get_binding('cf')
+            try:
+                csc = cass.get_columnfamily(cf).compaction_strategy
+            except Exception:
+                csc = ''
+        csc = csc.split('.')[-1]
+        if csc == 'SizeTieredCompactionStrategy':
+            return ['min_sstable_size']
+        elif csc == 'LeveledCompactionStrategy':
+            return ['sstable_size_in_mb']
+    for optname, _, subopts in columnfamily_map_options:
+        if opt == optname:
+            return subopts
+    return ()
+
+def create_cf_option_val_completer(ctxt, cass):
+    exist_opts = ctxt.get_binding('cfopt')
+    this_opt = exist_opts[-1]
+    if this_opt == 'compression_parameters:sstable_compression':
+        return map(cql_escape, available_compression_classes)
+    if this_opt == 'compaction_strategy_class':
+        return map(cql_escape, available_compaction_classes)
+    if any(this_opt == opt[0] for opt in obsolete_cf_options):
+        return ["'<obsolete_option>'"]
+    if this_opt in ('comparator', 'default_validation'):
+        return cql_types
+    if this_opt == 'read_repair_chance':
+        return [Hint('<float_between_0_and_1>')]
+    if this_opt == 'replicate_on_write':
+        return [Hint('<yes_or_no>')]
+    if this_opt in ('min_compaction_threshold', 'max_compaction_threshold', 'gc_grace_seconds'):
+        return [Hint('<integer>')]
+    return [Hint('<option_value>')]
+
+completer_for('createColumnFamilyStatement', 'optval') \
+    (create_cf_option_val_completer)
 
 syntax_rules += r'''
 <createIndexStatement> ::= "CREATE" "INDEX" indexname=<identifier>? "ON"
@@ -634,8 +714,8 @@ syntax_rules += r'''
 <alterInstructions> ::= "ALTER" existcol=<name> "TYPE" <storageType>
                       | "ADD" newcol=<name> <storageType>
                       | "DROP" existcol=<name>
-                      | "WITH" [optname]=<optionName> "=" [optval]=<cfOptionVal>
-                        ( "AND" [optname]=<optionName> "=" [optval]=<cfOptionVal> )*
+                      | "WITH" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal>
+                        ( "AND" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal> )*
                       ;
 '''
 
@@ -648,13 +728,10 @@ def alter_table_col_completer(ctxt, cass):
     cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
     return map(maybe_cql_escape, [md.name for md in cfdef.column_metadata])
 
-@completer_for('alterInstructions', 'optname')
-def alter_cf_with_option_completer(ctxt, cass):
-    return [c[0] for c in columnfamily_options] + \
-           [c[0] + ':' for c in columnfamily_map_options]
-
 explain_completion('alterInstructions', 'newcol', '<new_column_name>')
-explain_completion('alterInstructions', 'optval', '<option_value>')
+
+completer_for('alterInstructions', 'optval') \
+    (create_cf_option_val_completer)
 
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 
