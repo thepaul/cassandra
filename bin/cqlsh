@@ -52,10 +52,16 @@ import platform
 import warnings
 import csv
 
+
+readline = None
 try:
-    import readline
+    # check if tty first, cause readline doesn't check, and only cares
+    # about $TERM. we don't want the funky escape code stuff to be
+    # output if not a tty.
+    if sys.stdin.isatty():
+        import readline
 except ImportError:
-    readline = None
+    pass
 
 CQL_LIB_PREFIX = 'cql-internal-only-'
 THRIFT_LIB_PREFIX = 'thrift-python-internal-only-'
@@ -333,9 +339,13 @@ class VersionNotSupported(Exception):
     pass
 
 class DecodeError(Exception):
+    verb = 'decode'
+
     def __init__(self, thebytes, err, expectedtype, colname=None):
         self.thebytes = thebytes
         self.err = err
+        if isinstance(expectedtype, type) and issubclass(expectedtype, CassandraType):
+            expectedtype = expectedtype.cql_parameterized_type()
         self.expectedtype = expectedtype
         self.colname = colname
 
@@ -343,13 +353,17 @@ class DecodeError(Exception):
         return str(self.thebytes)
 
     def message(self):
-        what = 'column name %r' % (self.thebytes,)
+        what = 'value %r' % (self.thebytes,)
         if self.colname is not None:
             what = 'value %r (for column %r)' % (self.thebytes, self.colname)
-        return 'Failed to decode %s as %s: %s' % (what, self.expectedtype, self.err)
+        return 'Failed to %s %s as %s: %s' \
+               % (self.verb, what, self.expectedtype, self.err)
 
     def __repr__(self):
         return '<%s %s>' % (self.__class__.__name__, self.message())
+
+class FormatError(DecodeError):
+    verb = 'format'
 
 def full_cql_version(ver):
     while ver.count('.') < 2:
@@ -362,9 +376,9 @@ def format_value(val, typeclass, output_encoding, addcolor=False, time_format=No
                  float_precision=None, colormap=None, nullval=None):
     if isinstance(val, DecodeError):
         if addcolor:
-            return colorme(val.thebytes, colormap, 'hex')
+            return colorme(repr(val.thebytes), colormap, 'error')
         else:
-            return FormattedValue(val.thebytes)
+            return FormattedValue(repr(val.thebytes))
     if not issubclass(typeclass, CassandraType):
         typeclass = lookup_casstype(typeclass)
     return format_by_type(typeclass, val, output_encoding, colormap=colormap,
@@ -415,7 +429,7 @@ class Shell(cmd.Cmd):
 
     def __init__(self, hostname, port, color=False, username=None,
                  password=None, encoding=None, stdin=None, tty=True,
-                 completekey='tab', use_conn=None, cqlver=None, keyspace=None):
+                 completekey='tab', use_conn=None, cqlver='2', keyspace=None):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
@@ -477,9 +491,14 @@ class Shell(cmd.Cmd):
     def myformat_value(self, val, casstype, **kwargs):
         if isinstance(val, DecodeError):
             self.decoding_errors.append(val)
-        return format_value(val, casstype, self.output_codec.name,
-                            addcolor=self.color, time_format=self.display_time_format,
-                            float_precision=self.display_float_precision, **kwargs)
+        try:
+            return format_value(val, casstype, self.output_codec.name,
+                                addcolor=self.color, time_format=self.display_time_format,
+                                float_precision=self.display_float_precision, **kwargs)
+        except Exception, e:
+            err = FormatError(val, e, casstype)
+            self.decoding_errors.append(err)
+            return format_value(err, None, self.output_codec.name, addcolor=self.color)
 
     def myformat_colname(self, name, nametype):
         return self.myformat_value(name, nametype, colormap=COLUMN_NAME_COLORS)
@@ -818,7 +837,7 @@ class Shell(cmd.Cmd):
             print
         statement = self.statement.getvalue()
         if statement.strip():
-            if not self.onecmd(statement + ';'):
+            if not self.onecmd(statement):
                 self.printerr('Incomplete statement at end of file')
         self.do_exit()
 
@@ -991,6 +1010,7 @@ class Shell(cmd.Cmd):
         last_description = None
         for row in cursor:
             if last_description is not None and cursor.description != last_description:
+                cursor._reset()
                 return False
             last_description = cursor.description
         cursor._reset()
@@ -1025,13 +1045,13 @@ class Shell(cmd.Cmd):
                 widths[num] = max(widths[num], col.displaywidth)
 
         # print header
-        header = ' | '.join(hdr.color_ljust(w) for (hdr, w) in zip(formatted_names, widths))
+        header = ' | '.join(hdr.ljust(w, color=self.color) for (hdr, w) in zip(formatted_names, widths))
         self.writeresult(' ' + header.rstrip())
         self.writeresult('-%s-' % '-+-'.join('-' * w for w in widths))
 
         # print row data
         for row in formatted_data:
-            line = ' | '.join(col.color_rjust(w) for (col, w) in zip(row, widths))
+            line = ' | '.join(col.rjust(w, color=self.color) for (col, w) in zip(row, widths))
             self.writeresult(' ' + line)
 
     def print_dynamic_result(self, cursor):
@@ -1133,7 +1153,10 @@ class Shell(cmd.Cmd):
                 layout = self.get_columnfamily_layout(ksname, cfname)
             except CQL_ERRORS:
                 # most likely a 1.1 beta where cql3 is supported, but not system.schema_*
-                pass
+                if self.debug:
+                    print 'warning: failed to use system.schema_* tables to describe cf'
+                    import traceback
+                    traceback.print_exc()
             else:
                 return self.print_recreate_columnfamily_from_layout(layout, out)
 
@@ -1262,8 +1285,9 @@ class Shell(cmd.Cmd):
     def describe_columnfamilies(self, ksname):
         if ksname is None:
             for k in self.get_keyspaces():
-                print 'Keyspace %s' % (k.name,)
-                print '---------%s\n' % ('-' * len(k.name))
+                name = self.cql_protect_name(k.name)
+                print 'Keyspace %s' % (name,)
+                print '---------%s\n' % ('-' * len(name))
                 cmd.Cmd.columnize(self, [c.name for c in k.cf_defs])
                 print
         else:
@@ -2499,7 +2523,7 @@ def option_with_default(cparser_getter, section, option, default=None):
 def should_use_color():
     if not sys.stdout.isatty():
         return False
-    if os.environ.get('TERM', 'dumb') == 'dumb':
+    if os.environ.get('TERM', '') in ('dumb', ''):
         return False
     try:
         import subprocess
@@ -2507,7 +2531,7 @@ def should_use_color():
         stdout, _ = p.communicate()
         if int(stdout.strip()) < 8:
             return False
-    except (OSError, ImportError):
+    except (OSError, ImportError, ValueError):
         # oh well, we tried. at least we know there's a $TERM and it's
         # not "dumb".
         pass
