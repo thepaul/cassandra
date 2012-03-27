@@ -729,11 +729,14 @@ class Shell(cmd.Cmd):
         query results on the given cursor. The column in question is given by
         its zero-based ordinal number within the row.
 
-        Pretty big hack, but necessary to differentiate some things like ascii
-        vs. blob hex. Probably this should be available from the driver
-        somehow, instead.
+        This is necessary to differentiate some things like ascii vs. blob hex.
         """
 
+        if getattr(cursor, 'supports_name_info', False):
+            return cursor.name_info[num][1]
+
+        # This is a pretty big hack, but necessary until we can rely on
+        # python-cql 1.0.10 being around.
         row = cursor.result[cursor.rs_idx - 1]
         col = row.columns[num]
         schema = cursor.decoder.schema
