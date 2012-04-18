@@ -362,9 +362,6 @@ createIndexStatement returns [CreateIndexStatement expr]
 alterTableStatement returns [AlterTableStatement expr]
     @init {
         AlterTableStatement.Type type = null;
-        String validator = null;
-        ColumnIdentifier columnName = null;
-        Map<String, String> propertyMap = null;
     }
     : K_ALTER K_COLUMNFAMILY cf=columnFamilyName
           ( K_ALTER id=cident K_TYPE v=comparatorType { type = AlterTableStatement.Type.ALTER; }
