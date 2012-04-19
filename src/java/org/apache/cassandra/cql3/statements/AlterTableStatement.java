@@ -49,10 +49,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
         this.oType = type;
         this.columnName = columnName;
         this.validator = validator; // used only for ADD/ALTER commands
-        if (propertyMap != null)
-        {
-            this.cfProps.addAll(propertyMap);
-        }
+        this.cfProps.addAll(propertyMap);
     }
 
     public void announceMigration() throws InvalidRequestException, ConfigurationException

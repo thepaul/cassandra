@@ -362,6 +362,7 @@ createIndexStatement returns [CreateIndexStatement expr]
 alterTableStatement returns [AlterTableStatement expr]
     @init {
         AlterTableStatement.Type type = null;
+        props = new HashMap<String, String>();
     }
     : K_ALTER K_COLUMNFAMILY cf=columnFamilyName
           ( K_ALTER id=cident K_TYPE v=comparatorType { type = AlterTableStatement.Type.ALTER; }
