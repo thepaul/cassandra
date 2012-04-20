@@ -57,9 +57,11 @@ cqlshlibdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'p
 if os.path.isdir(cqlshlibdir):
     sys.path.insert(0, cqlshlibdir)
 
-from cqlshlib import cqlhandling, pylexotron, wcwidth
+from cqlshlib import cqlhandling, cql3handling, pylexotron, wcwidth
 from cqlshlib.cqlhandling import (token_dequote, cql_dequote, cql_escape,
                                   maybe_cql_escape, cql_typename)
+from cqlshlib.cql3handling import (CqlTableDef, maybe_cql3_escape_name,
+                                   cql3_escape_value)
 
 try:
     import readline
@@ -594,6 +596,18 @@ class Shell(cmd.Cmd):
             return {'build': 'unknown', 'cql': 'unknown', 'thrift': thrift_ver}
         return vers
 
+    def fetchdict(self):
+        row = self.cursor.fetchone()
+        desc = self.cursor.description
+        return dict(zip([d[0] for d in desc], row))
+
+    def fetchdict_all(self):
+        dicts = []
+        for row in self.cursor:
+            desc = self.cursor.description
+            dicts.append(dict(zip([d[0] for d in desc], row)))
+        return dicts
+
     def get_keyspace_names(self):
         return [k.name for k in self.get_keyspaces()]
 
@@ -678,6 +692,21 @@ class Shell(cmd.Cmd):
         return getattr(client, call)(*args)
 
     # ===== end thrift-dependent parts =====
+
+    # ===== cql3-dependent parts =====
+
+    def get_columnfamily_layout(self, ksname, cfname):
+        self.cursor.execute("""select * from system.schema_columnfamilies
+                                where "keyspace"=:ks and "columnfamily"=:cf""",
+                            {'ks': ksname, 'cf': cfname})
+        layout = self.fetchdict()
+        self.cursor.execute("""select * from system.schema_columns
+                                where "keyspace"=:ks and "columnfamily"=:cf""",
+                            {'ks': ksname, 'cf': cfname})
+        cols = self.fetchdict_all()
+        return CqlTableDef.from_layout(layout, cols)
+
+    # ===== end cql3-dependent parts =====
 
     def reset_statement(self):
         self.reset_prompt()
@@ -1038,9 +1067,26 @@ class Shell(cmd.Cmd):
                 self.print_recreate_columnfamily(cf, out)
 
     def print_recreate_columnfamily(self, cfdef, out):
+        # no metainfo available from system.schema_* for system CFs. also, punt
+        # and use old-style CF DESCRIBE if the CF doesn't have a composite
+        # key. I guess that is an ok compromise between hiding "comparator",
+        # "default_validation_class", etc for cql3, and still allowing users
+        # to work with old cql2-style wide tables.
+
+        if cfdef.keyspace != 'system' \
+        and self.cqlver_atleast(3) \
+        and cfdef.comparator_type.startswith(cql3handling.CqlTableDef.composite_type_name):
+            # sucks that we already got a CfDef, and now we have to query again
+            # another way, but oh well. refactor when convenient.
+            layout = self.get_columnfamily_layout(cfdef.keyspace, cfdef.name)
+            return self.print_recreate_columnfamily_from_layout(layout, out)
+        else:
+            return self.print_recreate_columnfamily_from_cfdef(cfdef, out)
+
+    def print_recreate_columnfamily_from_cfdef(self, cfdef, out):
         cfname = maybe_cql_escape(cfdef.name)
         out.write("CREATE COLUMNFAMILY %s (\n" % cfname)
-        alias = cfdef.key_alias if cfdef.key_alias else 'KEY'
+        alias = maybe_cql_escape(cfdef.key_alias) if cfdef.key_alias else 'KEY'
         keytype = cql_typename(cfdef.key_validation_class)
         out.write("  %s %s PRIMARY KEY" % (alias, keytype))
         indexed_columns = []
@@ -1080,6 +1126,54 @@ class Shell(cmd.Cmd):
             # guess CQL can't represent index_type or index_options
             out.write('CREATE INDEX %s ON %s (%s);\n'
                          % (col.index_name, cfname, maybe_cql_escape(col.name)))
+
+    def print_recreate_columnfamily_from_layout(self, layout, out):
+        cfname = maybe_cql3_escape_name(layout.name)
+        out.write("CREATE COLUMNFAMILY %s (\n" % cfname)
+        keycol = layout.columns[0]
+        out.write("  %s %s" % (maybe_cql3_escape_name(keycol.name), keycol.cqltype))
+        if len(layout.key_components) == 1:
+            out.write(" PRIMARY KEY")
+
+        indexed_columns = []
+        for col in layout.columns[1:]:
+            colname = maybe_cql3_escape_name(col.name)
+            out.write(",\n  %s %s" % (colname, col.cqltype))
+            if col.index_name is not None:
+                indexed_columns.append(col)
+
+        if len(layout.key_components) > 1:
+            out.write(",\n  PRIMARY KEY (%s)" % ', '.join(map(maybe_cql3_escape_name, layout.key_components)))
+        out.write("\n)")
+
+        cf_opts = []
+        for option in cql3handling.columnfamily_options:
+            optval = getattr(layout, option, None)
+            if optval is None:
+                continue
+            if option == 'row_cache_provider':
+                optval = trim_if_present(optval, 'org.apache.cassandra.cache.')
+            elif option == 'compaction_strategy_class':
+                optval = trim_if_present(optval, 'org.apache.cassandra.db.compaction.')
+            cf_opts.append((option, cql3_escape_value(optval)))
+        for option, _ in cql3handling.columnfamily_map_options:
+            optmap = getattr(layout, option, {})
+            for k, v in optmap.items():
+                if option == 'compression_parameters' and k == 'sstable_compression':
+                    v = trim_if_present(v, 'org.apache.cassandra.io.compress.')
+                cf_opts.append(('%s:%s' % (option, k.encode('ascii')), cql3_escape_value(v)))
+        if cf_opts:
+            joiner = 'WITH'
+            for optname, optval in cf_opts:
+                out.write(" %s\n  %s=%s" % (joiner, optname, optval))
+                joiner = 'AND'
+        out.write(";\n")
+
+        for col in indexed_columns:
+            out.write('\n')
+            # guess CQL can't represent index_type or index_options
+            out.write('CREATE INDEX %s ON %s (%s);\n'
+                         % (col.index_name, cfname, maybe_cql3_escape_name(col.name)))
 
     def describe_keyspace(self, ksname):
         print
