@@ -408,7 +408,7 @@ class Shell(cmd.Cmd):
 
         self.color = color
         if encoding is None:
-            encoding = sys.stdout.encoding
+            encoding = sys.stdout.encoding or 'ascii'
         self.encoding = encoding
         self.output_codec = codecs.lookup(encoding)
 
