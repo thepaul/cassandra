@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import re
-from .cqlhandling import cql_typename, cql_escape
+from .cqlhandling import cql_typename, cql_escape, cql_dequote
 
 try:
     import json
@@ -57,6 +57,17 @@ def cql3_escape_value(value):
 
 def cql3_escape_name(name):
     return '"%s"' % name.replace('"', '""')
+
+def cql3_dequote_value(value):
+    return cql_dequote(value)
+
+def cql3_dequote_name(name):
+    name = name.strip()
+    if name == '':
+        return name
+    if name[0] == '"':
+        name = name[1:-1].replace('""', '"')
+    return name
 
 valid_cql3_word_re = re.compile(r'^[a-z][0-9a-z_]*$', re.I)
 
