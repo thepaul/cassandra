@@ -50,6 +50,7 @@ import ConfigParser
 import codecs
 import re
 import platform
+import warnings
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
 # out of an unpacked Cassandra tarball, and after a proper package install.
@@ -462,6 +463,16 @@ def format_value(val, casstype, output_encoding, addcolor=False, time_format='',
         coloredval = color + bval + ANSI_RESET
 
     return FormattedValue(bval, coloredval, displaywidth)
+
+def show_warning_without_quoting_line(message, category, filename, lineno, file=None, line=None):
+    if file is None:
+        file = sys.stderr
+    try:
+        file.write(warnings.formatwarning(message, category, filename, lineno, line=''))
+    except IOError:
+        pass
+warnings.showwarning = show_warning_without_quoting_line
+warnings.filterwarnings('always', category=cql3handling.UnexpectedTableStructure)
 
 class Shell(cmd.Cmd):
     default_prompt  = "cqlsh> "
@@ -1064,24 +1075,40 @@ class Shell(cmd.Cmd):
             out.write('\nUSE %s;\n' % ksname)
             for cf in ksdef.cf_defs:
                 out.write('\n')
-                self.print_recreate_columnfamily(cf, out)
+                # yes, cf might be looked up again. oh well.
+                self.print_recreate_columnfamily(ksname, cf.name, out)
 
-    def print_recreate_columnfamily(self, cfdef, out):
-        # no metainfo available from system.schema_* for system CFs. also, punt
-        # and use old-style CF DESCRIBE if the CF doesn't have a composite
-        # key. I guess that is an ok compromise between hiding "comparator",
+    def print_recreate_columnfamily(self, ksname, cfname, out):
+        """
+        Output CQL commands which should be pasteable back into a CQL session
+        to recreate the given table. Can change based on CQL version in use;
+        CQL 3 syntax will not be output when in CQL 2 mode, and properties
+        which are deprecated with CQL 3 use (like default_validation) will not
+        be output when in CQL 3 mode.
+
+        Writes output to the given out stream.
+        """
+
+        # no metainfo available from system.schema_* for system CFs, so we have
+        # to use cfdef-based description for those.  also, use cfdef-based
+        # description when the CF doesn't have a composite key.  that seems like
+        # an ok compromise between hiding "comparator",
         # "default_validation_class", etc for cql3, and still allowing users
         # to work with old cql2-style wide tables.
 
-        if cfdef.keyspace != 'system' \
-        and self.cqlver_atleast(3) \
-        and cfdef.comparator_type.startswith(cql3handling.CqlTableDef.composite_type_name):
-            # sucks that we already got a CfDef, and now we have to query again
-            # another way, but oh well. refactor when convenient.
-            layout = self.get_columnfamily_layout(cfdef.keyspace, cfdef.name)
-            return self.print_recreate_columnfamily_from_layout(layout, out)
-        else:
-            return self.print_recreate_columnfamily_from_cfdef(cfdef, out)
+        if cfname != 'system' \
+        and self.cqlver_atleast(3):
+            try:
+                layout = self.get_columnfamily_layout(ksname, cfname)
+            except CQL_ERRORS:
+                # most likely a 1.1 beta where cql3 is supported, but not system.schema_*
+                pass
+            else:
+                if len(layout.key_components) > 1:
+                    return self.print_recreate_columnfamily_from_layout(layout, out)
+
+        cfdef = self.get_columnfamily(cfname, ksname=ksname)
+        return self.print_recreate_columnfamily_from_cfdef(cfdef, out)
 
     def print_recreate_columnfamily_from_cfdef(self, cfdef, out):
         cfname = maybe_cql_escape(cfdef.name)
@@ -1112,6 +1139,8 @@ class Shell(cmd.Cmd):
         for option, thriftname, _ in cqlhandling.columnfamily_map_options:
             optmap = getattr(cfdef, thriftname or option, {})
             for k, v in optmap.items():
+                if option == 'compression_parameters' and k == 'sstable_compression':
+                    v = trim_if_present(v, 'org.apache.cassandra.io.compress.')
                 notable_columns.append(('%s:%s' % (option, k), cql_escape(v)))
         out.write('\n)')
         if notable_columns:
@@ -1145,6 +1174,11 @@ class Shell(cmd.Cmd):
         if len(layout.key_components) > 1:
             out.write(",\n  PRIMARY KEY (%s)" % ', '.join(map(maybe_cql3_escape_name, layout.key_components)))
         out.write("\n)")
+        joiner = 'WITH'
+
+        if layout.compact_storage:
+            out.write(' WITH COMPACT STORAGE')
+            joiner = 'AND'
 
         cf_opts = []
         for option in cql3handling.columnfamily_options:
@@ -1163,7 +1197,6 @@ class Shell(cmd.Cmd):
                     v = trim_if_present(v, 'org.apache.cassandra.io.compress.')
                 cf_opts.append(('%s:%s' % (option, k.encode('ascii')), cql3_escape_value(v)))
         if cf_opts:
-            joiner = 'WITH'
             for optname, optval in cf_opts:
                 out.write(" %s\n  %s=%s" % (joiner, optname, optval))
                 joiner = 'AND'
@@ -1182,7 +1215,7 @@ class Shell(cmd.Cmd):
 
     def describe_columnfamily(self, cfname):
         print
-        self.print_recreate_columnfamily(self.get_columnfamily(cfname), sys.stdout)
+        self.print_recreate_columnfamily(ksname, cfname, sys.stdout)
         print
 
     def describe_columnfamilies(self, ksname):

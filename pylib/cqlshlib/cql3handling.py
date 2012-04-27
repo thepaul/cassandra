@@ -15,12 +15,20 @@
 # limitations under the License.
 
 import re
+from warnings import warn
 from .cqlhandling import cql_typename, cql_escape
 
 try:
     import json
 except ImportError:
     import simplejson as json
+
+class UnexpectedTableStructure(UserWarning):
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return 'Unexpected table structure; may not translate correctly to CQL. ' + self.msg
 
 keywords = set((
     'select', 'from', 'where', 'and', 'key', 'insert', 'update', 'with',
@@ -81,10 +89,17 @@ class CqlColumnDef:
         c.index_name = layout[u'index_name']
         return c
 
+    def __str__(self):
+        indexstr = ' (index %s)' % self.index_name if self.index_name is not None else ''
+        return '<CqlColumnDef %r %r%s>' % (self.name, self.cqltype, indexstr)
+    __repr__ = __str__
+
 class CqlTableDef:
     json_attrs = ('column_aliases', 'compaction_strategy_options', 'compression_parameters')
     composite_type_name = 'org.apache.cassandra.db.marshal.CompositeType'
+    colname_type_name = 'org.apache.cassandra.db.marshal.UTF8Type'
     column_class = CqlColumnDef
+    compact_storage = False
 
     key_components = ()
     columns = ()
@@ -105,15 +120,91 @@ class CqlTableDef:
         cf.key_components = [cf.key_alias.decode('ascii')] + list(cf.column_aliases)
         cf.key_validator = cql_typename(cf.key_validator)
         cf.default_validator = cql_typename(cf.default_validator)
-        cf.columns = cls.parse_composite(cf.key_components, cf.comparator) \
-                   + map(cls.column_class.from_layout, coldefs)
+        cf.coldefs = coldefs
+        cf.parse_composite()
+        cf.check_assumptions()
         return cf
 
-    @classmethod
-    def parse_composite(cls, col_aliases, comparator):
-        if comparator.startswith(cls.composite_type_name + '('):
-            subtypes = comparator[len(cls.composite_type_name) + 1:-1].split(',')
+    def check_assumptions(self):
+        """
+        be explicit about assumptions being made; warn if not met. if some of
+        these are accurate but not the others, it's not clear whether the
+        right results will come out.
+        """
+
+        # assumption is that all valid CQL tables match the rules in the following table.
+        # if they don't, give a warning and try anyway, but there should be no expectation
+        # of success.
+        #
+        #                               non-null     non-empty     comparator is    entries in
+        #                             value_alias  column_aliases    composite    schema_columns
+        #                            +----------------------------------------------------------
+        # composite, compact storage |    yes           yes           either           no
+        # composite, dynamic storage |    no            yes            yes             yes
+        # single-column primary key  |    no            no             no             either
+
+        if self.value_alias is not None:
+            # composite cf with compact storage
+            if len(self.coldefs) > 0:
+                warn(UnexpectedTableStructure(
+                        "expected compact storage CF (has value alias) to have no "
+                        "column definitions in system.schema_columns, but found %r"
+                        % (self.coldefs,)))
+            elif len(self.column_aliases) == 0:
+                warn(UnexpectedTableStructure(
+                        "expected compact storage CF (has value alias) to have "
+                        "column aliases, but found none"))
+        elif self.comparator.startswith(self.composite_type_name + '('):
+            # composite cf with dynamic storage
+            if len(self.column_aliases) == 0:
+                warn(UnexpectedTableStructure(
+                        "expected composite key CF to have column aliases, "
+                        "but found none"))
+            elif not self.comparator.endswith(self.colname_type_name + ')'):
+                warn(UnexpectedTableStructure(
+                        "expected non-compact composite CF to have %s as "
+                        "last component of composite comparator, but found %r"
+                        % (self.colname_type_name, self.comparator)))
+            elif len(self.coldefs) == 0:
+                warn(UnexpectedTableStructure(
+                        "expected non-compact composite CF to have entries in "
+                        "system.schema_columns, but found none"))
         else:
-            subtypes = [comparator]
-        assert len(subtypes) == len(col_aliases)
-        return [cls.column_class(a, cql_typename(t)) for (a, t) in zip(col_aliases, subtypes)]
+            # non-composite cf
+            if len(self.column_aliases) > 0:
+                warn(UnexpectedTableStructure(
+                        "expected non-composite CF to have no column aliases, "
+                        "but found %r." % (self.column_aliases,)))
+        num_subtypes = self.comparator.count(',') + 1
+        if self.compact_storage:
+            num_subtypes += 1
+        if len(self.key_components) != num_subtypes:
+            warn(UnexpectedTableStructure(
+                    "expected %r length to be %d, but it's %d. comparator=%r"
+                    % (self.key_components, num_subtypes, len(self.key_components), self.comparator)))
+
+    def parse_composite(self):
+        subtypes = [self.key_validator]
+        if self.comparator.startswith(self.composite_type_name + '('):
+            subtypenames = self.comparator[len(self.composite_type_name) + 1:-1]
+            subtypes.extend(map(cql_typename, subtypenames.split(',')))
+        else:
+            subtypes.append(cql_typename(self.comparator))
+
+        value_cols = []
+        if len(self.column_aliases) > 0:
+            if len(self.coldefs) > 0:
+                # composite cf, dynamic storage
+                subtypes.pop(-1)
+            else:
+                # composite cf, compact storage
+                self.compact_storage = True
+                value_cols = [self.column_class(self.value_alias, self.default_validator)]
+
+        keycols = map(self.column_class, self.key_components, subtypes)
+        normal_cols = map(self.column_class.from_layout, self.coldefs)
+        self.columns = keycols + value_cols + normal_cols
+
+    def __str__(self):
+        return '<%s %s.%s>' % (self.__class__.__name__, self.keyspace, self.name)
+    __repr__ = __str__
