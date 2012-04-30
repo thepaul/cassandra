@@ -188,8 +188,8 @@ cqlhandling.CqlRuleSet.append_rules(r'''
                    ;
 
 <describeCommand> ::= ( "DESCRIBE" | "DESC" ) ( "KEYSPACE" ksname=<name>?
-                                  | "COLUMNFAMILY" cfname=<name>
-                                  | "COLUMNFAMILIES"
+                                  | ( "COLUMNFAMILY" | "TABLE" ) cfname=<name>
+                                  | ( "COLUMNFAMILIES" | "TABLES" )
                                   | "SCHEMA"
                                   | "CLUSTER" )
                     ;
@@ -1127,7 +1127,7 @@ class Shell(cmd.Cmd):
 
     def print_recreate_columnfamily_from_cfdef(self, cfdef, out):
         cfname = self.cql_protect_name(cfdef.name)
-        out.write("CREATE COLUMNFAMILY %s (\n" % cfname)
+        out.write("CREATE TABLE %s (\n" % cfname)
         alias = self.cql_protect_name(cfdef.key_alias) if cfdef.key_alias else 'KEY'
         keytype = cql_typename(cfdef.key_validation_class)
         out.write("  %s %s PRIMARY KEY" % (alias, keytype))
@@ -1173,7 +1173,7 @@ class Shell(cmd.Cmd):
 
     def print_recreate_columnfamily_from_layout(self, layout, out):
         cfname = self.cql_protect_name(layout.name)
-        out.write("CREATE COLUMNFAMILY %s (\n" % cfname)
+        out.write("CREATE TABLE %s (\n" % cfname)
         keycol = layout.columns[0]
         out.write("  %s %s" % (self.cql_protect_name(keycol.name), keycol.cqltype))
         if len(layout.key_components) == 1:
@@ -1318,10 +1318,10 @@ class Shell(cmd.Cmd):
                     self.printerr('Not in any keyspace.')
                     return
             self.describe_keyspace(ksname)
-        elif what == 'columnfamily':
+        elif what in ('columnfamily', 'table'):
             cfname = self.cql_unprotect_name(parsed.get_binding('cfname'))
             self.describe_columnfamily(cfname)
-        elif what == 'columnfamilies':
+        elif what in ('columnfamilies', 'tables'):
             self.describe_columnfamilies(self.current_keyspace)
         elif what == 'cluster':
             self.describe_cluster()

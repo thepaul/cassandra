@@ -595,7 +595,7 @@ def create_ks_optval_completer(ctxt, cass):
     return [Hint('<option_value>')]
 
 syntax_rules += r'''
-<createColumnFamilyStatement> ::= "CREATE" "COLUMNFAMILY" cf=<name>
+<createColumnFamilyStatement> ::= "CREATE" ( "COLUMNFAMILY" | "TABLE" ) cf=<name>
                                     "(" keyalias=<colname> <storageType> "PRIMARY" "KEY"
                                         ( "," colname=<colname> <storageType> )* ")"
                                    ( "WITH" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal>
@@ -612,8 +612,8 @@ syntax_rules += r'''
                 ;
 '''
 
-explain_completion('createColumnFamilyStatement', 'keyalias', '<new_key_alias>')
-explain_completion('createColumnFamilyStatement', 'cf', '<new_columnfamily_name>')
+explain_completion('createColumnFamilyStatement', 'keyalias', '<new_key_name>')
+explain_completion('createColumnFamilyStatement', 'cf', '<new_table_name>')
 explain_completion('createColumnFamilyStatement', 'colname', '<new_column_name>')
 
 @completer_for('cfOptionName', 'cfoptname')
@@ -705,7 +705,7 @@ def drop_ks_completer(ctxt, cass):
     return map(maybe_cql_escape, cass.get_keyspace_names())
 
 syntax_rules += r'''
-<dropColumnFamilyStatement> ::= "DROP" "COLUMNFAMILY" cf=<name>
+<dropColumnFamilyStatement> ::= "DROP" ( "COLUMNFAMILY" | "TABLE" ) cf=<name>
                               ;
 '''
 
@@ -723,7 +723,7 @@ def drop_index_completer(ctxt, cass):
     return map(maybe_cql_escape, cass.get_index_names())
 
 syntax_rules += r'''
-<alterTableStatement> ::= "ALTER" "COLUMNFAMILY" cf=<name> <alterInstructions>
+<alterTableStatement> ::= "ALTER" ( "COLUMNFAMILY" | "TABLE" ) cf=<name> <alterInstructions>
                         ;
 <alterInstructions> ::= "ALTER" existcol=<name> "TYPE" <storageType>
                       | "ADD" newcol=<name> <storageType>
