@@ -178,27 +178,37 @@ def cql_typename(classname):
     except KeyError:
         return cql_escape(classname)
 
+def make_module_completers(completerlist):
+    """
+    Binds the completer_for and explain_completion functions to a particular
+    list of completers, so that there can be multiple such lists without
+    requiring multiple definitions of the function.
+    """
+
+    def completer_for(rulename, symname):
+        def registrator(f):
+            def completerwrapper(ctxt):
+                cass = ctxt.get_binding('cassandra_conn', None)
+                if cass is None:
+                    return ()
+                return f(ctxt, cass)
+            completerwrapper.func_name = 'completerwrapper_on_' + f.func_name
+            completerlist.append((rulename, symname, completerwrapper))
+            return completerwrapper
+        return registrator
+
+    def explain_completion(rulename, symname, explanation=None):
+        if explanation is None:
+            explanation = '<%s>' % (symname,)
+        @completer_for(rulename, symname)
+        def explainer(ctxt, cass):
+            return [Hint(explanation)]
+        return explainer
+
+    return completer_for, explain_completion
+
 special_completers = []
-
-def completer_for(rulename, symname):
-    def registrator(f):
-        def completerwrapper(ctxt):
-            cass = ctxt.get_binding('cassandra_conn', None)
-            if cass is None:
-                return ()
-            return f(ctxt, cass)
-        completerwrapper.func_name = 'completerwrapper_on_' + f.func_name
-        special_completers.append((rulename, symname, completerwrapper))
-        return completerwrapper
-    return registrator
-
-def explain_completion(rulename, symname, explanation=None):
-    if explanation is None:
-        explanation = '<%s>' % (symname,)
-    @completer_for(rulename, symname)
-    def explainer(ctxt, cass):
-        return [Hint(explanation)]
-    return explainer
+completer_for, explain_completion = make_module_completers(special_completers)
 
 def is_counter_col(cfdef, colname):
     col_info = [cm for cm in cfdef.column_metadata if cm.name == colname]

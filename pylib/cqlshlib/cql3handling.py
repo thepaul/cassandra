@@ -16,7 +16,8 @@
 
 import re
 from warnings import warn
-from .cqlhandling import cql_typename, cql_escape, cql_dequote
+from .cqlhandling import (cql_typename, cql_escape, cql_dequote,
+                          make_module_completers)
 
 try:
     import json
@@ -86,6 +87,11 @@ def maybe_cql3_escape_name(name):
     if is_valid_cql3_name(name):
         return name
     return cql3_escape_name(name)
+
+special_completers = []
+completer_for, explain_completion = make_module_completers(special_completers)
+
+
 
 # BEGIN SYNTAX/COMPLETION RULE DEFINITIONS
 
@@ -630,6 +636,8 @@ completer_for('alterInstructions', 'optval') \
     (create_cf_option_val_completer)
 
 # END SYNTAX/COMPLETION RULE DEFINITIONS
+
+
 
 class CqlColumnDef:
     index_name = None
