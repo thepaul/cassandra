@@ -1070,8 +1070,12 @@ class Shell(cmd.Cmd):
         return cqlhandling.cql_escape(value)
 
     def cql_unprotect_name(self, namestr):
-        if namestr is not None:
+        if namestr is None:
+            return
+        if self.cqlver_atleast(3):
             return cql3handling.cql3_dequote_name(namestr)
+        else:
+            return cqlhandling.cql_dequote(namestr)
 
     def cql_unprotect_value(self, valstr):
         if valstr is not None:
