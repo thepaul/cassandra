@@ -310,6 +310,13 @@ class DecodeError(Exception):
     def __repr__(self):
         return '<%s %s>' % (self.__class__.__name__, self.message())
 
+def full_cql_version(ver):
+    while ver.count('.') < 2:
+        ver += '.0'
+    ver_parts = ver.split('-', 1) + ['']
+    vertuple = tuple(map(int, ver_parts[0].split('.')) + [ver_parts[1]])
+    return ver, vertuple
+
 def trim_if_present(s, prefix):
     if s.startswith(prefix):
         return s[len(prefix):]
@@ -527,12 +534,10 @@ class Shell(cmd.Cmd):
         self.query_out = sys.stdout
 
     def set_expanded_cql_version(self, ver):
-        while ver.count('.') < 2:
-            ver += '.0'
+        ver, vertuple = full_cql_version(ver)
         self.set_cql_version(ver)
         self.cql_version = ver
-        ver_parts = ver.split('-', 1) + ['']
-        self.cql_ver_tuple = tuple(map(int, ver_parts[0].split('.')) + [ver_parts[1]])
+        self.cql_ver_tuple = vertuple
 
     def cqlver_atleast(self, major, minor=0, patch=0):
         return self.cql_ver_tuple[:3] >= (major, minor, patch)
@@ -2320,6 +2325,12 @@ def read_options(cmdlineargs, environment):
         options.color = False
         options.tty = False
 
+    options.cqlversion, cqlvertup = full_cql_version(options.cqlversion)
+    if cqlvertup[0] < 3:
+        options.cqlspec = cqlhandling
+    else:
+        options.cqlspec = cql3handling
+
     try:
         port = int(port)
     except ValueError:
@@ -2327,7 +2338,17 @@ def read_options(cmdlineargs, environment):
 
     return options, hostname, port
 
+def setup_cqlspec(cqlmodule):
+    global cqlspec
+    cqlspec = cqlmodule
+    cqlspec.CqlRuleSet.append_rules(cqlsh_extra_syntax_rules)
+    for rulename, termname, func in cqlsh_syntax_completers:
+        cqlspec.cql_add_completer(rulename, termname)(func)
+    cqlspec.commands_end_with_newline.update(my_commands_ending_with_newline)
+
 def main(options, hostname, port):
+    setup_cqlspec(options.cqlspec)
+
     if os.path.exists(HISTORY) and readline is not None:
         readline.read_history_file(HISTORY)
         delims = readline.get_completer_delims()
