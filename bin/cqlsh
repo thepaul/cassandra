@@ -159,7 +159,7 @@ else:
 debug_completion = bool(os.environ.get('CQLSH_DEBUG_COMPLETION', '') == 'YES')
 
 # we want the cql parser to understand our cqlsh-specific commands too
-cqlhandling.commands_end_with_newline.update((
+my_commands_ending_with_newline = (
     'help',
     '?',
     'describe',
@@ -171,9 +171,16 @@ cqlhandling.commands_end_with_newline.update((
     'debug',
     'exit',
     'quit'
-))
+)
 
-cqlhandling.CqlRuleSet.append_rules(r'''
+cqlsh_syntax_completers = []
+def cqlsh_syntax_completer(rulename, termname):
+    def registrator(f):
+        cqlsh_syntax_completers.append((rulename, termname, f))
+        return f
+    return registrator
+
+cqlsh_extra_syntax_rules = r'''
 <cqlshCommand> ::= <CQL_Statement>
                  | <specialCommand> ( ";" | "\n" )
                  ;
@@ -222,35 +229,35 @@ cqlhandling.CqlRuleSet.append_rules(r'''
                 ;
 
 <qmark> ::= "?" ;
-''')
+'''
 
-@cqlhandling.cql_add_completer('helpCommand', 'topic')
+@cqlsh_syntax_completer('helpCommand', 'topic')
 def complete_help(ctxt, cqlsh):
     helpfuncs = [n[5:].upper() for n in cqlsh.get_names() if n.startswith('help_')]
     funcs_with_docstrings = [n[3:].upper() for n in cqlsh.get_names()
                              if n.startswith('do_') and getattr(cqlsh, n, None).__doc__]
     return sorted(helpfuncs + funcs_with_docstrings)
 
-@cqlhandling.cql_add_completer('describeCommand', 'ksname')
+@cqlsh_syntax_completer('describeCommand', 'ksname')
 def complete_describe_ks(ctxt, cqlsh):
     return map(cqlsh.cql_protect_name, cqlsh.get_keyspace_names())
 
-@cqlhandling.cql_add_completer('describeCommand', 'cfname')
+@cqlsh_syntax_completer('describeCommand', 'cfname')
 def complete_describe_cf(ctxt, cqlsh):
     return map(cqlsh.cql_protect_name, cqlsh.get_columnfamily_names())
 
-@cqlhandling.cql_add_completer('assumeCommand', 'ks')
+@cqlsh_syntax_completer('assumeCommand', 'ks')
 def complete_assume_ks(ctxt, cqlsh):
     return [cqlsh.cql_protect_name(ks) + '.' for ks in cqlsh.get_keyspace_names()]
 
-@cqlhandling.cql_add_completer('assumeCommand', 'cf')
+@cqlsh_syntax_completer('assumeCommand', 'cf')
 def complete_assume_cf(ctxt, cqlsh):
     ks = ctxt.get_binding('ks', None)
     if ks is not None:
         ks = cqlsh.cql_unprotect_name(ks)
     return map(cqlsh.cql_protect_name, cqlsh.get_columnfamily_names(ks))
 
-@cqlhandling.cql_add_completer('assumeTypeDef', 'colname')
+@cqlsh_syntax_completer('assumeTypeDef', 'colname')
 def complete_assume_col(ctxt, cqlsh):
     ks = ctxt.get_binding('ks', None)
     ks = cqlsh.cql_unprotect_name(ks) if ks is not None else None
@@ -277,9 +284,9 @@ def complete_source_quoted_filename(ctxt, cqlsh):
         annotated.append(match)
     return annotated
 
-cqlhandling.cql_add_completer('sourceCommand', 'fname') \
+cqlsh_syntax_completer('sourceCommand', 'fname') \
         (complete_source_quoted_filename)
-cqlhandling.cql_add_completer('captureCommand', 'fname') \
+cqlsh_syntax_completer('captureCommand', 'fname') \
         (complete_source_quoted_filename)
 
 class NoKeyspaceError(Exception):
@@ -797,7 +804,7 @@ class Shell(cmd.Cmd):
         """
 
         try:
-            statements, in_batch = cqlhandling.cql_split_statements(statementtext)
+            statements, in_batch = cqlspec.cql_split_statements(statementtext)
         except pylexotron.LexingError, e:
             if self.show_line_nums:
                 self.printerr('Invalid syntax at char %d' % (e.charnum,))
@@ -842,20 +849,20 @@ class Shell(cmd.Cmd):
             cmdword = 'help'
         custom_handler = getattr(self, 'do_' + cmdword.lower(), None)
         if custom_handler:
-            parsed = cqlhandling.cql_whole_parse_tokens(tokens, srcstr=srcstr,
-                                                        startsymbol='cqlshCommand')
+            parsed = cqlspec.cql_whole_parse_tokens(tokens, srcstr=srcstr,
+                                                    startsymbol='cqlshCommand')
             if parsed and not parsed.remainder:
                 # successful complete parse
                 return custom_handler(parsed)
             else:
                 return self.handle_parse_error(cmdword, tokens, parsed, srcstr)
-        return self.perform_statement(cqlhandling.cql_extract_orig(tokens, srcstr))
+        return self.perform_statement(cqlspec.cql_extract_orig(tokens, srcstr))
 
     def handle_parse_error(self, cmdword, tokens, parsed, srcstr):
         if cmdword.lower() == 'select':
             # hey, maybe they know about some new syntax we don't. type
             # assumptions won't work, but maybe the query will.
-            return self.perform_statement(cqlhandling.cql_extract_orig(tokens, srcstr))
+            return self.perform_statement(cqlspec.cql_extract_orig(tokens, srcstr))
         if parsed:
             self.printerr('Improper %s command (problem at %r).' % (cmdword, parsed.remainder[0]))
         else:
@@ -1058,8 +1065,8 @@ class Shell(cmd.Cmd):
         begidx = readline.get_begidx() + len(prevlines)
         endidx = readline.get_endidx() + len(prevlines)
         stuff_to_complete = wholestmt[:begidx]
-        return cqlhandling.cql_complete(stuff_to_complete, text, cassandra_conn=self,
-                                        debug=debug_completion, startsymbol='cqlshCommand')
+        return cqlspec.cql_complete(stuff_to_complete, text, cassandra_conn=self,
+                                    debug=debug_completion, startsymbol='cqlshCommand')
 
     def set_prompt(self, prompt):
         if self.prompt != '':
@@ -1428,7 +1435,7 @@ class Shell(cmd.Cmd):
             if cqltype is None:
                 continue
             try:
-                validator_class = cqlhandling.find_validator_class(cqltype)
+                validator_class = cqlspec.find_validator_class(cqltype)
             except KeyError:
                 self.printerr('Error: validator type %s not found.' % cqltype)
             else:
@@ -1571,7 +1578,7 @@ class Shell(cmd.Cmd):
 
     def help_types(self):
         print "\n        CQL types recognized by this version of cqlsh:\n"
-        for t in cqlhandling.cql_types:
+        for t in cqlspec.cql_types:
             print '          ' + t
         print """
         For information on the various recognizable input formats for these
