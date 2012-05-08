@@ -2350,7 +2350,7 @@ def setup_cqlspec(cqlmodule):
     cqlspec = cqlmodule
     cqlspec.CqlRuleSet.append_rules(cqlsh_extra_syntax_rules)
     for rulename, termname, func in cqlsh_syntax_completers:
-        cqlspec.cql_add_completer(rulename, termname)(func)
+        cqlspec.completer_for(rulename, termname)(func)
     cqlspec.commands_end_with_newline.update(my_commands_ending_with_newline)
 
 def main(options, hostname, port):

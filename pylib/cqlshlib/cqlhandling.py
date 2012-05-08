@@ -178,7 +178,7 @@ def cql_typename(classname):
     except KeyError:
         return cql_escape(classname)
 
-def make_module_completers(completerlist):
+def make_ruleset_completers(ruleset):
     """
     Binds the completer_for and explain_completion functions to a particular
     list of completers, so that there can be multiple such lists without
@@ -193,7 +193,7 @@ def make_module_completers(completerlist):
                     return ()
                 return f(ctxt, cass)
             completerwrapper.func_name = 'completerwrapper_on_' + f.func_name
-            completerlist.append((rulename, symname, completerwrapper))
+            ruleset.register_completer(completerwrapper, rulename, symname)
             return completerwrapper
         return registrator
 
@@ -207,8 +207,8 @@ def make_module_completers(completerlist):
 
     return completer_for, explain_completion
 
-special_completers = []
-completer_for, explain_completion = make_module_completers(special_completers)
+CqlRuleSet = pylexotron.ParsingRuleSet()
+completer_for, explain_completion = make_ruleset_completers(CqlRuleSet)
 
 def is_counter_col(cfdef, colname):
     col_info = [cm for cm in cfdef.column_metadata if cm.name == colname]
@@ -762,17 +762,7 @@ completer_for('alterInstructions', 'optval') \
 
 
 
-CqlRuleSet = pylexotron.ParsingRuleSet.from_rule_defs(syntax_rules)
-for rulename, symname, compf in special_completers:
-    CqlRuleSet.register_completer(compf, rulename, symname)
-
-def cql_add_completer(rulename, symname):
-    registrator = completer_for(rulename, symname)
-    def more_registration(f):
-        f = registrator(f)
-        CqlRuleSet.register_completer(f, rulename, symname)
-        return f
-    return more_registration
+CqlRuleSet.append_rules(syntax_rules)
 
 def cql_parse(text, startsymbol='Start'):
     tokens = CqlRuleSet.lex(text)

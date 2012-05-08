@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pylexotron
 import re
 from warnings import warn
 from .cqlhandling import (cql_typename, cql_escape, cql_dequote,
-                          make_module_completers)
+                          make_ruleset_completers)
 
 try:
     import json
@@ -88,8 +89,8 @@ def maybe_cql3_escape_name(name):
         return name
     return cql3_escape_name(name)
 
-special_completers = []
-completer_for, explain_completion = make_module_completers(special_completers)
+CqlRuleSet = pylexotron.ParsingRuleSet(syntax_rules)
+completer_for, explain_completion = make_ruleset_completers(CqlRuleSet)
 
 
 
@@ -638,6 +639,8 @@ completer_for('alterInstructions', 'optval') \
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 
 
+
+CqlRuleSet.append_rules(syntax_rules)
 
 class CqlColumnDef:
     index_name = None
