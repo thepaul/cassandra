@@ -14,11 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pylexotron
 import re
 from warnings import warn
-from .cqlhandling import (cql_typename, cql_escape, cql_dequote,
-                          make_ruleset_completers)
+from .cqlhandling import CqlParsingRuleSet, Hint
 
 try:
     import json
@@ -32,65 +30,100 @@ class UnexpectedTableStructure(UserWarning):
     def __str__(self):
         return 'Unexpected table structure; may not translate correctly to CQL. ' + self.msg
 
-keywords = set((
-    'select', 'from', 'where', 'and', 'key', 'insert', 'update', 'with',
-    'limit', 'using', 'consistency', 'one', 'quorum', 'all', 'any',
-    'local_quorum', 'each_quorum', 'two', 'three', 'use', 'count', 'set',
-    'begin', 'apply', 'batch', 'truncate', 'delete', 'in', 'create',
-    'keyspace', 'schema', 'columnfamily', 'table', 'index', 'on', 'drop',
-    'primary', 'into', 'values', 'timestamp', 'ttl', 'alter', 'add', 'type',
-    'compact', 'storage', 'order', 'by', 'asc', 'desc'
-))
+class Cql3ParsingRuleSet(CqlParsingRuleSet):
+    keywords = set((
+        'select', 'from', 'where', 'and', 'key', 'insert', 'update', 'with',
+        'limit', 'using', 'consistency', 'one', 'quorum', 'all', 'any',
+        'local_quorum', 'each_quorum', 'two', 'three', 'use', 'count', 'set',
+        'begin', 'apply', 'batch', 'truncate', 'delete', 'in', 'create',
+        'keyspace', 'schema', 'columnfamily', 'table', 'index', 'on', 'drop',
+        'primary', 'into', 'values', 'timestamp', 'ttl', 'alter', 'add', 'type',
+        'compact', 'storage', 'order', 'by', 'asc', 'desc'
+    ))
 
-columnfamily_options = (
-    'comment',
-    'bloom_filter_fp_chance',
-    'caching',
-    'read_repair_chance',
-    # 'local_read_repair_chance',   -- not yet a valid cql option
-    'gc_grace_seconds',
-    'min_compaction_threshold',
-    'max_compaction_threshold',
-    'replicate_on_write',
-    'compaction_strategy_class',
-)
+    columnfamily_layout_options = (
+        'comment',
+        'bloom_filter_fp_chance',
+        'caching',
+        'read_repair_chance',
+        # 'local_read_repair_chance',   -- not yet a valid cql option
+        'gc_grace_seconds',
+        'min_compaction_threshold',
+        'max_compaction_threshold',
+        'replicate_on_write',
+        'compaction_strategy_class',
+    )
 
-columnfamily_map_options = (
-    ('compaction_strategy_options',
-        ()),
-    ('compression_parameters',
-        ('sstable_compression', 'chunk_length_kb', 'crc_check_chance')),
-)
+    columnfamily_layout_map_options = (
+        ('compaction_strategy_options',
+            ()),
+        ('compression_parameters',
+            ('sstable_compression', 'chunk_length_kb', 'crc_check_chance')),
+    )
 
-def cql3_escape_value(value):
-    return cql_escape(value)
+    @staticmethod
+    def token_dequote(tok):
+        if tok[0] == 'unclosedName':
+            # strip one quote
+            return tok[1][1:].replace('""', '"')
+        # cql2 version knows how to do everything else
+        return CqlParsingRuleSet.token_dequote(tok)
 
-def cql3_escape_name(name):
-    return '"%s"' % name.replace('"', '""')
+    @classmethod
+    def cql3_dequote_value(cls, value):
+        return cls.cql2_dequote_value(value)
 
-def cql3_dequote_value(value):
-    return cql_dequote(value)
-
-def cql3_dequote_name(name):
-    name = name.strip()
-    if name == '':
+    @staticmethod
+    def cql3_dequote_name(name):
+        name = name.strip()
+        if name == '':
+            return name
+        if name[0] == '"':
+            name = name[1:-1].replace('""', '"')
         return name
-    if name[0] == '"':
-        name = name[1:-1].replace('""', '"')
-    return name
 
-valid_cql3_word_re = re.compile(r'^[a-z][0-9a-z_]*$', re.I)
+    @classmethod
+    def cql3_escape_value(cls, value):
+        return cls.cql2_escape_value(value)
 
-def is_valid_cql3_name(s):
-    return valid_cql3_word_re.match(s) is not None and s not in keywords
+    @staticmethod
+    def cql3_escape_name(name):
+        return '"%s"' % name.replace('"', '""')
 
-def maybe_cql3_escape_name(name):
-    if is_valid_cql3_name(name):
-        return name
-    return cql3_escape_name(name)
+    valid_cql3_word_re = re.compile(r'^[a-z][0-9a-z_]*$', re.I)
 
-CqlRuleSet = pylexotron.ParsingRuleSet(syntax_rules)
-completer_for, explain_completion = make_ruleset_completers(CqlRuleSet)
+    @classmethod
+    def is_valid_cql3_name(cls, s):
+        return cls.valid_cql3_word_re.match(s) is not None and s not in cls.keywords
+
+    @classmethod
+    def cql3_maybe_escape_name(cls, name):
+        if cls.is_valid_cql3_name(name):
+            return name
+        return cls.cql3_escape_name(name)
+
+    @classmethod
+    def dequote_any(cls, t):
+        if t[0] == '"':
+            return cls.cql3_dequote_name(t)
+        return CqlParsingRuleSet.dequote_any(t)
+
+    dequote_value = cql3_dequote_value
+    dequote_name = cql3_dequote_name
+    escape_value = cql3_escape_value
+    escape_name = cql3_escape_name
+    maybe_escape_name = cql3_maybe_escape_name
+
+CqlRuleSet = Cql3ParsingRuleSet()
+
+# convenience for remainder of module
+shorthands = ('completer_for', 'explain_completion',
+              'dequote_value', 'dequote_name',
+              'escape_value', 'escape_name',
+              'maybe_escape_name', 'cql_typename')
+
+for shorthand in shorthands:
+    globals()[shorthand] = getattr(CqlRuleSet, shorthand)
 
 
 
@@ -170,11 +203,11 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 
 @completer_for('consistencylevel', 'cl')
 def cl_completer(ctxt, cass):
-    return consistency_levels
+    return CqlRuleSet.consistency_levels
 
 @completer_for('storageType', 'typename')
 def storagetype_completer(ctxt, cass):
-    return cql_types
+    return CqlRuleSet.cql_types
 
 syntax_rules += r'''
 <useStatement> ::= "USE" ksname=<name>
@@ -183,7 +216,7 @@ syntax_rules += r'''
 
 @completer_for('useStatement', 'ksname')
 def use_ks_completer(ctxt, cass):
-    return map(maybe_cql_escape, cass.get_keyspace_names())
+    return map(maybe_escape_name, cass.get_keyspace_names())
 
 syntax_rules += r'''
 <selectStatement> ::= "SELECT" <whatToSelect>
@@ -208,25 +241,25 @@ syntax_rules += r'''
 def select_source_completer(ctxt, cass):
     ks = ctxt.get_binding('selectks', None)
     if ks is not None:
-        ks = cql_dequote(ks)
+        ks = dequote_name(ks)
     try:
         cfnames = cass.get_columnfamily_names(ks)
     except Exception:
         if ks is None:
             return ()
         raise
-    return map(maybe_cql_escape, cfnames)
+    return map(maybe_escape_name, cfnames)
 
 @completer_for('selectStatement', 'selectks')
 def select_keyspace_completer(ctxt, cass):
-    return [maybe_cql_escape(ks) + '.' for ks in cass.get_keyspace_names()]
+    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
 
 @completer_for('selectWhereClause', 'keyname')
 def select_where_keyname_completer(ctxt, cass):
     ksname = ctxt.get_binding('selectks')
     if ksname is not None:
-        ksname = cql_dequote(ksname)
-    selectsource = cql_dequote(ctxt.get_binding('selectsource'))
+        ksname = dequote_name(ksname)
+    selectsource = dequote_name(ctxt.get_binding('selectsource'))
     cfdef = cass.get_columnfamily(selectsource, ksname=ksname)
     return [cfdef.key_alias if cfdef.key_alias is not None else 'KEY']
 
@@ -234,9 +267,9 @@ def select_where_keyname_completer(ctxt, cass):
 def select_relation_lhs_completer(ctxt, cass):
     ksname = ctxt.get_binding('selectks')
     if ksname is not None:
-        ksname = cql_dequote(ksname)
-    selectsource = cql_dequote(ctxt.get_binding('selectsource'))
-    return map(maybe_cql_escape, cass.filterable_column_names(selectsource, ksname=ksname))
+        ksname = dequote_name(ksname)
+    selectsource = dequote_name(ctxt.get_binding('selectsource'))
+    return map(maybe_escape_name, cass.filterable_column_names(selectsource, ksname=ksname))
 
 @completer_for('whatToSelect', 'countparens')
 def select_count_parens_completer(ctxt, cass):
@@ -262,25 +295,25 @@ syntax_rules += r'''
 
 @completer_for('insertStatement', 'insertks')
 def insert_ks_completer(ctxt, cass):
-    return [maybe_cql_escape(ks) + '.' for ks in cass.get_keyspace_names()]
+    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
 
 @completer_for('insertStatement', 'insertcf')
 def insert_cf_completer(ctxt, cass):
     ks = ctxt.get_binding('insertks', None)
     if ks is not None:
-        ks = cql_dequote(ks)
+        ks = dequote_name(ks)
     try:
         cfnames = cass.get_columnfamily_names(ks)
     except Exception:
         if ks is None:
             return ()
         raise
-    return map(maybe_cql_escape, cfnames)
+    return map(maybe_escape_name, cfnames)
 
 @completer_for('insertStatement', 'keyname')
 def insert_keyname_completer(ctxt, cass):
     insertcf = ctxt.get_binding('insertcf')
-    cfdef = cass.get_columnfamily(cql_dequote(insertcf))
+    cfdef = cass.get_columnfamily(dequote_name(insertcf))
     return [cfdef.key_alias if cfdef.key_alias is not None else 'KEY']
 
 explain_completion('insertStatement', 'colname')
@@ -309,20 +342,20 @@ syntax_rules += r'''
 
 @completer_for('updateStatement', 'updateks')
 def update_cf_completer(ctxt, cass):
-    return [maybe_cql_escape(ks) + '.' for ks in cass.get_keyspace_names()]
+    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
 
 @completer_for('updateStatement', 'updatecf')
 def update_cf_completer(ctxt, cass):
     ks = ctxt.get_binding('updateks', None)
     if ks is not None:
-        ks = cql_dequote(ks)
+        ks = dequote_name(ks)
     try:
         cfnames = cass.get_columnfamily_names(ks)
     except Exception:
         if ks is None:
             return ()
         raise
-    return map(maybe_cql_escape, cfnames)
+    return map(maybe_escape_name, cfnames)
 
 @completer_for('updateStatement', 'updateopt')
 def insert_option_completer(ctxt, cass):
@@ -333,35 +366,35 @@ def insert_option_completer(ctxt, cass):
 
 @completer_for('assignment', 'updatecol')
 def update_col_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
-    colnames = map(maybe_cql_escape, [cm.name for cm in cfdef.column_metadata])
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    colnames = map(maybe_escape_name, [cm.name for cm in cfdef.column_metadata])
     return colnames + [Hint('<colname>')]
 
 @completer_for('assignment', 'update_rhs')
 def update_countername_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
-    curcol = cql_dequote(ctxt.get_binding('updatecol', ''))
-    return [maybe_cql_escape(curcol)] if is_counter_col(cfdef, curcol) else [Hint('<term>')]
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    curcol = dequote_name(ctxt.get_binding('updatecol', ''))
+    return [maybe_escape_name(curcol)] if CqlRuleSet.is_counter_col(cfdef, curcol) else [Hint('<term>')]
 
 @completer_for('assignment', 'counterop')
 def update_counterop_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
-    curcol = cql_dequote(ctxt.get_binding('updatecol', ''))
-    return ['+', '-'] if is_counter_col(cfdef, curcol) else []
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    curcol = dequote_name(ctxt.get_binding('updatecol', ''))
+    return ['+', '-'] if CqlRuleSet.is_counter_col(cfdef, curcol) else []
 
 @completer_for('updateWhereClause', 'updatefiltercol')
 def update_filtercol_completer(ctxt, cass):
-    cfname = cql_dequote(ctxt.get_binding('cf'))
-    return map(maybe_cql_escape, cass.filterable_column_names(cfname))
+    cfname = dequote_name(ctxt.get_binding('cf'))
+    return map(maybe_escape_name, cass.filterable_column_names(cfname))
 
 @completer_for('updateWhereClause', 'updatefilterkey')
 def update_filterkey_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
     return [cfdef.key_alias if cfdef.key_alias is not None else 'KEY']
 
 @completer_for('updateWhereClause', 'filter_in')
 def update_filter_in_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
     fk = ctxt.get_binding('updatefilterkey')
     return ['IN'] if fk in ('KEY', cfdef.key_alias) else []
 
@@ -378,20 +411,20 @@ syntax_rules += r'''
 
 @completer_for('deleteStatement', 'deleteks')
 def update_cf_completer(ctxt, cass):
-    return [maybe_cql_escape(ks) + '.' for ks in cass.get_keyspace_names()]
+    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
 
 @completer_for('deleteStatement', 'deletecf')
 def delete_cf_completer(ctxt, cass):
     ks = ctxt.get_binding('deleteks', None)
     if ks is not None:
-        ks = cql_dequote(ks)
+        ks = dequote_name(ks)
     try:
         cfnames = cass.get_columnfamily_names(ks)
     except Exception:
         if ks is None:
             return ()
         raise
-    return map(maybe_cql_escape, cfnames)
+    return map(maybe_escape_name, cfnames)
 
 @completer_for('deleteStatement', 'delopt')
 def delete_opt_completer(ctxt, cass):
@@ -430,20 +463,20 @@ syntax_rules += r'''
 
 @completer_for('truncateStatement', 'truncateks')
 def update_cf_completer(ctxt, cass):
-    return [maybe_cql_escape(ks) + '.' for ks in cass.get_keyspace_names()]
+    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
 
 @completer_for('truncateStatement', 'truncatecf')
 def truncate_cf_completer(ctxt, cass):
     ks = ctxt.get_binding('truncateks', None)
     if ks is not None:
-        ks = cql_dequote(ks)
+        ks = dequote_name(ks)
     try:
         cfnames = cass.get_columnfamily_names(ks)
     except Exception:
         if ks is None:
             return ()
         raise
-    return map(maybe_cql_escape, cfnames)
+    return map(maybe_escape_name, cfnames)
 
 syntax_rules += r'''
 <createKeyspaceStatement> ::= "CREATE" "KEYSPACE" ksname=<name>
@@ -468,7 +501,7 @@ def create_ks_opt_completer(ctxt, cass):
     except ValueError:
         return ['strategy_class =']
     vals = ctxt.get_binding('optval')
-    stratclass = cql_dequote(vals[stratopt])
+    stratclass = dequote_value(vals[stratopt])
     if stratclass in ('SimpleStrategy', 'OldNetworkTopologyStrategy'):
         return ['strategy_options:replication_factor =']
     return [Hint('<strategy_option_name>')]
@@ -477,7 +510,7 @@ def create_ks_opt_completer(ctxt, cass):
 def create_ks_optval_completer(ctxt, cass):
     exist_opts = ctxt.get_binding('optname', (None,))
     if exist_opts[-1] == 'strategy_class':
-        return map(cql_escape, replication_strategies)
+        return map(escape_value, CqlRuleSet.replication_strategies)
     return [Hint('<option_value>')]
 
 syntax_rules += r'''
@@ -504,13 +537,13 @@ explain_completion('createColumnFamilyStatement', 'colname', '<new_column_name>'
 
 @completer_for('cfOptionName', 'cfoptname')
 def create_cf_option_completer(ctxt, cass):
-    return [c[0] for c in columnfamily_options] + \
-           [c[0] + ':' for c in columnfamily_map_options]
+    return [c[0] for c in CqlRuleSet.columnfamily_options] + \
+           [c[0] + ':' for c in CqlRuleSet.columnfamily_map_options]
 
 @completer_for('cfOptionName', 'cfoptsep')
 def create_cf_suboption_separator(ctxt, cass):
     opt = ctxt.get_binding('cfoptname')
-    if any(opt == c[0] for c in columnfamily_map_options):
+    if any(opt == c[0] for c in CqlRuleSet.columnfamily_map_options):
         return [':']
     return ()
 
@@ -523,7 +556,7 @@ def create_cf_suboption_completer(ctxt, cass):
         prevvals = ctxt.get_binding('optval', ())
         for prevopt, prevval in zip(prevopts, prevvals):
             if prevopt == 'compaction_strategy_class':
-                csc = cql_dequote(prevval)
+                csc = dequote_value(prevval)
                 break
         else:
             cf = ctxt.get_binding('cf')
@@ -536,7 +569,7 @@ def create_cf_suboption_completer(ctxt, cass):
             return ['min_sstable_size']
         elif csc == 'LeveledCompactionStrategy':
             return ['sstable_size_in_mb']
-    for optname, _, subopts in columnfamily_map_options:
+    for optname, _, subopts in CqlRuleSet.columnfamily_map_options:
         if opt == optname:
             return subopts
     return ()
@@ -545,13 +578,13 @@ def create_cf_option_val_completer(ctxt, cass):
     exist_opts = ctxt.get_binding('cfopt')
     this_opt = exist_opts[-1]
     if this_opt == 'compression_parameters:sstable_compression':
-        return map(cql_escape, available_compression_classes)
+        return map(escape_value, CqlRuleSet.available_compression_classes)
     if this_opt == 'compaction_strategy_class':
-        return map(cql_escape, available_compaction_classes)
-    if any(this_opt == opt[0] for opt in obsolete_cf_options):
+        return map(escape_value, CqlRuleSet.available_compaction_classes)
+    if any(this_opt == opt[0] for opt in CqlRuleSet.obsolete_cf_options):
         return ["'<obsolete_option>'"]
     if this_opt in ('comparator', 'default_validation'):
-        return cql_types
+        return CqlRuleSet.cql_types
     if this_opt == 'read_repair_chance':
         return [Hint('<float_between_0_and_1>')]
     if this_opt == 'replicate_on_write':
@@ -573,13 +606,13 @@ explain_completion('createIndexStatement', 'indexname', '<new_index_name>')
 
 @completer_for('createIndexStatement', 'cf')
 def create_index_cf_completer(ctxt, cass):
-    return map(maybe_cql_escape, cass.get_columnfamily_names())
+    return map(maybe_escape_name, cass.get_columnfamily_names())
 
 @completer_for('createIndexStatement', 'col')
 def create_index_col_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
     colnames = [md.name for md in cfdef.column_metadata if md.index_name is None]
-    return map(maybe_cql_escape, colnames)
+    return map(maybe_escape_name, colnames)
 
 syntax_rules += r'''
 <dropKeyspaceStatement> ::= "DROP" "KEYSPACE" ksname=<name>
@@ -588,7 +621,7 @@ syntax_rules += r'''
 
 @completer_for('dropKeyspaceStatement', 'ksname')
 def drop_ks_completer(ctxt, cass):
-    return map(maybe_cql_escape, cass.get_keyspace_names())
+    return map(maybe_escape_name, cass.get_keyspace_names())
 
 syntax_rules += r'''
 <dropColumnFamilyStatement> ::= "DROP" ( "COLUMNFAMILY" | "TABLE" ) cf=<name>
@@ -597,7 +630,7 @@ syntax_rules += r'''
 
 @completer_for('dropColumnFamilyStatement', 'cf')
 def drop_cf_completer(ctxt, cass):
-    return map(maybe_cql_escape, cass.get_columnfamily_names())
+    return map(maybe_escape_name, cass.get_columnfamily_names())
 
 syntax_rules += r'''
 <dropIndexStatement> ::= "DROP" "INDEX" indexname=<name>
@@ -606,7 +639,7 @@ syntax_rules += r'''
 
 @completer_for('dropIndexStatement', 'cf')
 def drop_index_completer(ctxt, cass):
-    return map(maybe_cql_escape, cass.get_index_names())
+    return map(maybe_escape_name, cass.get_index_names())
 
 syntax_rules += r'''
 <alterTableStatement> ::= "ALTER" ( "COLUMNFAMILY" | "TABLE" ) cf=<name> <alterInstructions>
@@ -621,15 +654,15 @@ syntax_rules += r'''
 
 @completer_for('alterTableStatement', 'cf')
 def alter_table_cf_completer(ctxt, cass):
-    return map(maybe_cql_escape, cass.get_columnfamily_names())
+    return map(maybe_escape_name, cass.get_columnfamily_names())
 
 @completer_for('alterInstructions', 'existcol')
 def alter_table_col_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(cql_dequote(ctxt.get_binding('cf')))
+    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
     cols = [md.name for md in cfdef.column_metadata]
     if cfdef.key_alias is not None:
         cols.append(cfdef.key_alias)
-    return map(maybe_cql_escape, cols)
+    return map(maybe_escape_name, cols)
 
 explain_completion('alterInstructions', 'newcol', '<new_column_name>')
 
@@ -638,9 +671,9 @@ completer_for('alterInstructions', 'optval') \
 
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 
-
-
 CqlRuleSet.append_rules(syntax_rules)
+
+
 
 class CqlColumnDef:
     index_name = None

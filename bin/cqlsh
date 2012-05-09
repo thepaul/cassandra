@@ -60,7 +60,6 @@ if os.path.isdir(cqlshlibdir):
     sys.path.insert(0, cqlshlibdir)
 
 from cqlshlib import cqlhandling, cql3handling, pylexotron, wcwidth
-from cqlshlib.cqlhandling import cql_typename
 
 try:
     import readline
@@ -455,7 +454,7 @@ def format_value(val, casstype, output_encoding, addcolor=False, time_format='',
     elif casstype in ('DecimalType', 'UUIDType', 'BooleanType'):
         # let python do these for us
         bval = str(val)
-        color = colormap[cql_typename(casstype)]
+        color = colormap[cqlruleset.cql_typename(casstype)]
     elif casstype == 'BytesType':
         bval = ''.join('%02x' % ord(c) for c in val)
         color = colormap['hex']
@@ -593,14 +592,14 @@ class Shell(cmd.Cmd):
                 cf = self.cql_protect_name(cf)
                 if override.default_name_type:
                     print 'ASSUME %s NAMES ARE %s;' \
-                          % (cf, cql_typename(override.default_name_type))
+                          % (cf, cqlruleset.cql_typename(override.default_name_type))
                 if override.default_value_type:
                     print 'ASSUME %s VALUES ARE %s;' \
-                          % (cf, cql_typename(override.default_value_type))
+                          % (cf, cqlruleset.cql_typename(override.default_value_type))
                 for colname, vtype in override.value_types.items():
                     colname = self.cql_protect_name(colname)
                     print 'ASSUME %s(%s) VALUES ARE %s;' \
-                          % (cf, colname, cql_typename(vtype))
+                          % (cf, colname, cqlruleset.cql_typename(vtype))
         print
 
     def get_cluster_versions(self):
@@ -804,7 +803,7 @@ class Shell(cmd.Cmd):
         """
 
         try:
-            statements, in_batch = cqlspec.cql_split_statements(statementtext)
+            statements, in_batch = cqlruleset.cql_split_statements(statementtext)
         except pylexotron.LexingError, e:
             if self.show_line_nums:
                 self.printerr('Invalid syntax at char %d' % (e.charnum,))
@@ -849,20 +848,20 @@ class Shell(cmd.Cmd):
             cmdword = 'help'
         custom_handler = getattr(self, 'do_' + cmdword.lower(), None)
         if custom_handler:
-            parsed = cqlspec.cql_whole_parse_tokens(tokens, srcstr=srcstr,
-                                                    startsymbol='cqlshCommand')
+            parsed = cqlruleset.cql_whole_parse_tokens(tokens, srcstr=srcstr,
+                                                       startsymbol='cqlshCommand')
             if parsed and not parsed.remainder:
                 # successful complete parse
                 return custom_handler(parsed)
             else:
                 return self.handle_parse_error(cmdword, tokens, parsed, srcstr)
-        return self.perform_statement(cqlspec.cql_extract_orig(tokens, srcstr))
+        return self.perform_statement(cqlruleset.cql_extract_orig(tokens, srcstr))
 
     def handle_parse_error(self, cmdword, tokens, parsed, srcstr):
         if cmdword.lower() == 'select':
             # hey, maybe they know about some new syntax we don't. type
             # assumptions won't work, but maybe the query will.
-            return self.perform_statement(cqlspec.cql_extract_orig(tokens, srcstr))
+            return self.perform_statement(cqlruleset.cql_extract_orig(tokens, srcstr))
         if parsed:
             self.printerr('Improper %s command (problem at %r).' % (cmdword, parsed.remainder[0]))
         else:
@@ -1065,33 +1064,27 @@ class Shell(cmd.Cmd):
         begidx = readline.get_begidx() + len(prevlines)
         endidx = readline.get_endidx() + len(prevlines)
         stuff_to_complete = wholestmt[:begidx]
-        return cqlspec.cql_complete(stuff_to_complete, text, cassandra_conn=self,
-                                    debug=debug_completion, startsymbol='cqlshCommand')
+        return cqlruleset.cql_complete(stuff_to_complete, text, cassandra_conn=self,
+                                       debug=debug_completion, startsymbol='cqlshCommand')
 
     def set_prompt(self, prompt):
         if self.prompt != '':
             self.prompt = prompt
 
     def cql_protect_name(self, name):
-        if self.cqlver_atleast(3):
-            return cql3handling.maybe_cql3_escape_name(name)
-        else:
-            return cqlhandling.maybe_cql_escape(name)
+        return cqlruleset.maybe_escape_name(name)
 
     def cql_protect_value(self, value):
-        return cqlhandling.cql_escape(value)
+        return cqlruleset.escape_value(value)
 
     def cql_unprotect_name(self, namestr):
         if namestr is None:
             return
-        if self.cqlver_atleast(3):
-            return cql3handling.cql3_dequote_name(namestr)
-        else:
-            return cqlhandling.cql_dequote(namestr)
+        return cqlruleset.dequote_name(namestr)
 
     def cql_unprotect_value(self, valstr):
         if valstr is not None:
-            return cqlhandling.cql_dequote(valstr)
+            return cqlruleset.dequote_value(valstr)
 
     def print_recreate_keyspace(self, ksdef, out):
         stratclass = trim_if_present(ksdef.strategy_class, 'org.apache.cassandra.locator.')
@@ -1145,21 +1138,21 @@ class Shell(cmd.Cmd):
         cfname = self.cql_protect_name(cfdef.name)
         out.write("CREATE TABLE %s (\n" % cfname)
         alias = self.cql_protect_name(cfdef.key_alias) if cfdef.key_alias else 'KEY'
-        keytype = cql_typename(cfdef.key_validation_class)
+        keytype = cqlruleset.cql_typename(cfdef.key_validation_class)
         out.write("  %s %s PRIMARY KEY" % (alias, keytype))
         indexed_columns = []
         for col in cfdef.column_metadata:
             colname = self.cql_protect_name(col.name)
-            out.write(",\n  %s %s" % (colname, cql_typename(col.validation_class)))
+            out.write(",\n  %s %s" % (colname, cqlruleset.cql_typename(col.validation_class)))
             if col.index_name is not None:
                 indexed_columns.append(col)
         cf_opts = []
-        for (option, thriftname) in cqlhandling.columnfamily_options:
+        for (option, thriftname) in cqlruleset.columnfamily_options:
             optval = getattr(cfdef, thriftname or option, None)
             if optval is None:
                 continue
             if option in ('comparator', 'default_validation'):
-                optval = cql_typename(optval)
+                optval = cqlruleset.cql_typename(optval)
             else:
                 if option == 'row_cache_provider':
                     optval = trim_if_present(optval, 'org.apache.cassandra.cache.')
@@ -1167,7 +1160,7 @@ class Shell(cmd.Cmd):
                     optval = trim_if_present(optval, 'org.apache.cassandra.db.compaction.')
                 optval = self.cql_protect_value(optval)
             cf_opts.append((option, optval))
-        for option, thriftname, _ in cqlhandling.columnfamily_map_options:
+        for option, thriftname, _ in cqlruleset.columnfamily_map_options:
             optmap = getattr(cfdef, thriftname or option, {})
             for k, v in optmap.items():
                 if option == 'compression_parameters' and k == 'sstable_compression':
@@ -1212,7 +1205,7 @@ class Shell(cmd.Cmd):
             joiner = 'AND'
 
         cf_opts = []
-        for option in cql3handling.columnfamily_options:
+        for option in cqlruleset.columnfamily_layout_options:
             optval = getattr(layout, option, None)
             if optval is None:
                 continue
@@ -1221,7 +1214,7 @@ class Shell(cmd.Cmd):
             elif option == 'compaction_strategy_class':
                 optval = trim_if_present(optval, 'org.apache.cassandra.db.compaction.')
             cf_opts.append((option, self.cql_protect_value(optval)))
-        for option, _ in cql3handling.columnfamily_map_options:
+        for option, _ in cqlruleset.columnfamily_layout_map_options:
             optmap = getattr(layout, option, {})
             for k, v in optmap.items():
                 if option == 'compression_parameters' and k == 'sstable_compression':
@@ -1435,7 +1428,7 @@ class Shell(cmd.Cmd):
             if cqltype is None:
                 continue
             try:
-                validator_class = cqlspec.find_validator_class(cqltype)
+                validator_class = cqlruleset.find_validator_class(cqltype)
             except KeyError:
                 self.printerr('Error: validator type %s not found.' % cqltype)
             else:
@@ -1578,7 +1571,7 @@ class Shell(cmd.Cmd):
 
     def help_types(self):
         print "\n        CQL types recognized by this version of cqlsh:\n"
-        for t in cqlspec.cql_types:
+        for t in cqlruleset.cql_types:
             print '          ' + t
         print """
         For information on the various recognizable input formats for these
@@ -2334,9 +2327,9 @@ def read_options(cmdlineargs, environment):
 
     options.cqlversion, cqlvertup = full_cql_version(options.cqlversion)
     if cqlvertup[0] < 3:
-        options.cqlspec = cqlhandling
+        options.cqlmodule = cqlhandling
     else:
-        options.cqlspec = cql3handling
+        options.cqlmodule = cql3handling
 
     try:
         port = int(port)
@@ -2345,16 +2338,16 @@ def read_options(cmdlineargs, environment):
 
     return options, hostname, port
 
-def setup_cqlspec(cqlmodule):
-    global cqlspec
-    cqlspec = cqlmodule
-    cqlspec.CqlRuleSet.append_rules(cqlsh_extra_syntax_rules)
+def setup_cqlruleset(cqlmodule):
+    global cqlruleset
+    cqlruleset = cqlmodule.CqlRuleSet
+    cqlruleset.append_rules(cqlsh_extra_syntax_rules)
     for rulename, termname, func in cqlsh_syntax_completers:
-        cqlspec.completer_for(rulename, termname)(func)
-    cqlspec.commands_end_with_newline.update(my_commands_ending_with_newline)
+        cqlruleset.completer_for(rulename, termname)(func)
+    cqlruleset.commands_end_with_newline.update(my_commands_ending_with_newline)
 
 def main(options, hostname, port):
-    setup_cqlspec(options.cqlspec)
+    setup_cqlruleset(options.cqlmodule)
 
     if os.path.exists(HISTORY) and readline is not None:
         readline.read_history_file(HISTORY)
