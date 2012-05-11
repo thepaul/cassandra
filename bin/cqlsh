@@ -891,10 +891,14 @@ class Shell(cmd.Cmd):
           FROM [<keyspace>.]<table>
             [USING CONSISTENCY <consistencylevel>]
             [WHERE <clause>]
+            [ORDER BY <colname> [DESC]]
             [LIMIT m];
 
         SELECT is used to read one or more records from a CQL table. It returns
         a set of rows matching the selection criteria specified.
+
+        Note that FIRST and REVERSED are only supported in CQL 2, and ORDER BY
+        is only supported in CQL 3 and higher.
 
         For more information, see one of the following:
 
@@ -1769,6 +1773,8 @@ class Shell(cmd.Cmd):
 
          * ANY
          * ONE (default)
+         * TWO
+         * THREE
          * QUORUM
          * ALL
          * LOCAL_QUORUM
