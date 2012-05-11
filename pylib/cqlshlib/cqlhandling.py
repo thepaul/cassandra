@@ -206,12 +206,22 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
         # handle some different completion scenarios- in particular, completing
         # inside a string literal
         prefix = None
-        if tokens and tokens[-1][0] == 'unclosedString':
-            prefix = self.token_dequote(tokens[-1])
-            tokens = tokens[:-1]
-            partial = prefix + partial
-        if tokens and tokens[-1][0] == 'unclosedComment':
-            return []
+        dequoter = util.identity
+        if tokens:
+            if tokens[-1][0] == 'unclosedString':
+                prefix = self.token_dequote(tokens[-1])
+                tokens = tokens[:-1]
+                partial = prefix + partial
+                dequoter = self.dequote_value
+                requoter = self.escape_value
+            elif tokens[-1][0] == 'unclosedName':
+                prefix = self.token_dequote(tokens[-1])
+                tokens = tokens[:-1]
+                partial = prefix + partial
+                dequoter = self.dequote_name
+                requoter = self.escape_name
+            elif tokens[-1][0] == 'unclosedComment':
+                return []
         bindings['partial'] = partial
         bindings['*SRC*'] = text
 
@@ -230,9 +240,9 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
         # find matches with the partial word under completion
         if ignore_case:
             partial = partial.lower()
-            f = lambda s: s and self.dequote_value(s).lower().startswith(partial)
+            f = lambda s: s and dequoter(s).lower().startswith(partial)
         else:
-            f = lambda s: s and self.dequote_value(s).startswith(partial)
+            f = lambda s: s and dequoter(s).startswith(partial)
         candidates = filter(f, strcompletes)
 
         if prefix is not None:
@@ -240,7 +250,7 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
             # for completion. the opening quote is already there on the command
             # line and not part of the word under completion, and readline
             # fills in the closing quote for us.
-            candidates = [self.escape_value(self.dequote_value(c))[len(prefix)+1:-1] for c in candidates]
+            candidates = [requoter(dequoter(c))[len(prefix)+1:-1] for c in candidates]
 
             # the above process can result in an empty string; this doesn't help for
             # completions
@@ -392,6 +402,7 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
     cql2_dequote_name = dequote_name = dequote_value = cql2_dequote_value
     cql2_escape_name = escape_name = escape_value = cql2_escape_value
     maybe_escape_name = cql2_maybe_escape_name
+    dequote_any = cql2_dequote_value
 
 CqlRuleSet = CqlParsingRuleSet()
 

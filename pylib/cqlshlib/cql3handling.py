@@ -154,6 +154,7 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 <cmp> ::=           /[<>]=?/ ;
 
 <unclosedString>  ::= /'([^']|'')*/ ;
+<unclosedName>    ::= /"([^"]|"")*/ ;
 <unclosedComment> ::= /[/][*][^\n]*$/ ;
 
 <symbol> ::= <star>

@@ -69,3 +69,6 @@ def list_bifilter(pred, iterable):
     for i in iterable:
         (yes_s if pred(i) else no_s).append(i)
     return yes_s, no_s
+
+def identity(x):
+    return x
