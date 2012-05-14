@@ -232,9 +232,8 @@ syntax_rules += r'''
 <relation> ::= [rel_lhs]=<colname> ("=" | "<" | ">" | "<=" | ">=") <colname>
              ;
 <whatToSelect> ::= colname=<colname> ("," colname=<colname>)*
-                 | ("FIRST" <integer>)? "REVERSED"? (rangestart=<colname> ".." rangeend=<colname>
-                                                     | "*")
-                 | "COUNT" countparens="(" "*" ")"
+                 | "*"
+                 | "COUNT" "(" star=( "*" | "1" ) ")"
                  ;
 '''
 
@@ -272,13 +271,11 @@ def select_relation_lhs_completer(ctxt, cass):
     selectsource = dequote_name(ctxt.get_binding('selectsource'))
     return map(maybe_escape_name, cass.filterable_column_names(selectsource, ksname=ksname))
 
-@completer_for('whatToSelect', 'countparens')
-def select_count_parens_completer(ctxt, cass):
-    return ['(*)']
+@completer_for('whatToSelect', 'star')
+def select_count_star_completer(ctxt, cass):
+    return ['*']
 
 explain_completion('whatToSelect', 'colname')
-explain_completion('whatToSelect', 'rangestart', '<range_start>')
-explain_completion('whatToSelect', 'rangeend', '<range_end>')
 
 syntax_rules += r'''
 <insertStatement> ::= "INSERT" "INTO" ( insertks=<name> "." )? insertcf=<name>
