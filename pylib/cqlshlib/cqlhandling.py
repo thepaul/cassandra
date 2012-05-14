@@ -268,6 +268,9 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
                 newcandidates.append(c)
             candidates = newcandidates
 
+        # append a space for single, complete identifiers
+        if len(candidates) == 1 and candidates[0][-1].isalnum():
+            candidates[0] += ' '
         return candidates, hints
 
     @staticmethod
@@ -299,9 +302,13 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
 
         if len(completions) == 1 and len(hints) == 0:
             c = completions[0]
+            if debug:
+                print "** Got one completion: %r. Checking for further matches...\n" % (c,)
             if not c.isspace():
                 new_c = self.cql_complete_multiple(text, c, init_bindings, startsymbol=startsymbol)
                 completions = [new_c]
+            if debug:
+                print "** New list of completions: %r" % (completions,)
 
         return hints + completions
 

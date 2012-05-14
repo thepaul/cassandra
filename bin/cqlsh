@@ -716,6 +716,8 @@ class Shell(cmd.Cmd):
     # ===== cql3-dependent parts =====
 
     def get_columnfamily_layout(self, ksname, cfname):
+        if ksname is None:
+            ksname = self.current_keyspace
         self.cursor.execute("""select * from system.schema_columnfamilies
                                 where "keyspace"=:ks and "columnfamily"=:cf""",
                             {'ks': ksname, 'cf': cfname})

@@ -224,6 +224,7 @@ syntax_rules += r'''
                         "FROM" ( selectks=<name> "." )? selectsource=<name>
                           ("USING" "CONSISTENCY" <consistencylevel>)?
                           ("WHERE" <selectWhereClause>)?
+                          ("ORDER" "BY" <selectOrderClause> ( "," <selectOrderClause> )* )?
                           ("LIMIT" <integer>)?
                     ;
 <selectWhereClause> ::= <relation> ("AND" <relation>)*
@@ -235,7 +236,27 @@ syntax_rules += r'''
                  | "*"
                  | "COUNT" "(" star=( "*" | "1" ) ")"
                  ;
+<selectOrderClause> ::= [ordercol]=<colname> ( "ASC" | "DESC" )?
+                      ;
 '''
+
+@completer_for('selectOrderClause', 'ordercol')
+def select_order_column_completer(ctxt, cass):
+    prev_order_cols = ctxt.get_binding('ordercol', ())
+    keyname = ctxt.get_binding('keyname')
+    if keyname is None:
+        keyname = ctxt.get_binding('rel_lhs', ())
+        if not keyname:
+            return [Hint("Can't ORDER BY here: need to specify partition key in WHERE clause")]
+    ksname = ctxt.get_binding('selectks')
+    if ksname is not None:
+        ksname = dequote_name(ksname)
+    selectsource = dequote_name(ctxt.get_binding('selectsource'))
+    layout = cass.get_columnfamily_layout(ksname, selectsource)
+    order_by_candidates = layout.key_components[1:]  # can't order by first part of key
+    if len(order_by_candidates) > len(prev_order_cols):
+        return [maybe_escape_name(order_by_candidates[len(prev_order_cols)])]
+    return [Hint('No more orderable columns here.')]
 
 @completer_for('selectStatement', 'selectsource')
 def select_source_completer(ctxt, cass):
