@@ -348,7 +348,7 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
 
     @classmethod
     def is_valid_cql_word(cls, s):
-        return cls.valid_cql_word_re.match(s) is not None and s not in cls.keywords
+        return cls.valid_cql_word_re.match(s) is not None and s.lower() not in cls.keywords
 
     @staticmethod
     def cql_extract_orig(toklist, srcstr):

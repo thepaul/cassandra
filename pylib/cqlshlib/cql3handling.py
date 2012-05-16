@@ -94,7 +94,7 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
 
     @classmethod
     def is_valid_cql3_name(cls, s):
-        return cls.valid_cql3_word_re.match(s) is not None and s not in cls.keywords
+        return cls.valid_cql3_word_re.match(s) is not None and s.lower() not in cls.keywords
 
     @classmethod
     def cql3_maybe_escape_name(cls, name):
