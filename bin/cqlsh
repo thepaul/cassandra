@@ -193,8 +193,9 @@ cqlsh_extra_syntax_rules = r'''
                    | <exitCommand>
                    ;
 
-<describeCommand> ::= ( "DESCRIBE" | "DESC" ) ( "KEYSPACE" ksname=<name>?
-                                  | ( "COLUMNFAMILY" | "TABLE" ) cfname=<name>
+<describeCommand> ::= ( "DESCRIBE" | "DESC" )
+                                  ( "KEYSPACE" ksname=<keyspaceName>?
+                                  | ( "COLUMNFAMILY" | "TABLE" ) cf=<columnFamilyName>
                                   | ( "COLUMNFAMILIES" | "TABLES" )
                                   | "SCHEMA"
                                   | "CLUSTER" )
@@ -203,13 +204,13 @@ cqlsh_extra_syntax_rules = r'''
 <showCommand> ::= "SHOW" what=( "VERSION" | "HOST" | "ASSUMPTIONS" )
                 ;
 
-<assumeCommand> ::= "ASSUME" ( ks=<name> "." )? cf=<name> <assumeTypeDef>
-                                                          ( "," <assumeTypeDef> )*
+<assumeCommand> ::= "ASSUME" cf=<columnFamilyName> <assumeTypeDef>
+                                                   ( "," <assumeTypeDef> )*
                   ;
 
 <assumeTypeDef> ::= "NAMES" "ARE" names=<storageType>
                   | "VALUES" "ARE" values=<storageType>
-                  | "(" colname=<name> ")" "VALUES" "ARE" colvalues=<storageType>
+                  | "(" colname=<colname> ")" "VALUES" "ARE" colvalues=<storageType>
                   ;
 
 <sourceCommand> ::= "SOURCE" fname=<stringLiteral>
@@ -236,25 +237,6 @@ def complete_help(ctxt, cqlsh):
     funcs_with_docstrings = [n[3:].upper() for n in cqlsh.get_names()
                              if n.startswith('do_') and getattr(cqlsh, n, None).__doc__]
     return sorted(helpfuncs + funcs_with_docstrings)
-
-@cqlsh_syntax_completer('describeCommand', 'ksname')
-def complete_describe_ks(ctxt, cqlsh):
-    return map(cqlsh.cql_protect_name, cqlsh.get_keyspace_names())
-
-@cqlsh_syntax_completer('describeCommand', 'cfname')
-def complete_describe_cf(ctxt, cqlsh):
-    return map(cqlsh.cql_protect_name, cqlsh.get_columnfamily_names())
-
-@cqlsh_syntax_completer('assumeCommand', 'ks')
-def complete_assume_ks(ctxt, cqlsh):
-    return [cqlsh.cql_protect_name(ks) + '.' for ks in cqlsh.get_keyspace_names()]
-
-@cqlsh_syntax_completer('assumeCommand', 'cf')
-def complete_assume_cf(ctxt, cqlsh):
-    ks = ctxt.get_binding('ks', None)
-    if ks is not None:
-        ks = cqlsh.cql_unprotect_name(ks)
-    return map(cqlsh.cql_protect_name, cqlsh.get_columnfamily_names(ks))
 
 @cqlsh_syntax_completer('assumeTypeDef', 'colname')
 def complete_assume_col(ctxt, cqlsh):
@@ -658,8 +640,7 @@ class Shell(cmd.Cmd):
                     indnames.append(md.index_name)
         return indnames
 
-    def filterable_column_names(self, cfname, ksname=None):
-        cfdef = self.get_columnfamily(cfname, ksname=ksname)
+    def filterable_column_names(self, cfdef):
         filterable = set()
         if cfdef.key_alias is not None and cfdef.key_alias != 'KEY':
             filterable.add(cfdef.key_alias)
@@ -1243,9 +1224,11 @@ class Shell(cmd.Cmd):
         self.print_recreate_keyspace(self.get_keyspace(ksname), sys.stdout)
         print
 
-    def describe_columnfamily(self, cfname):
+    def describe_columnfamily(self, ksname, cfname):
+        if ksname is None:
+            ksname = self.current_keyspace
         print
-        self.print_recreate_columnfamily(self.current_keyspace, cfname, sys.stdout)
+        self.print_recreate_columnfamily(ksname, cfname, sys.stdout)
         print
 
     def describe_columnfamilies(self, ksname):
@@ -1334,8 +1317,9 @@ class Shell(cmd.Cmd):
                     return
             self.describe_keyspace(ksname)
         elif what in ('columnfamily', 'table'):
-            cfname = self.cql_unprotect_name(parsed.get_binding('cfname'))
-            self.describe_columnfamily(cfname)
+            ks = self.cql_unprotect_name(parsed.get_binding('ksname', None))
+            cf = self.cql_unprotect_name(parsed.get_binding('cfname'))
+            self.describe_columnfamily(ks, cf)
         elif what in ('columnfamilies', 'tables'):
             self.describe_columnfamilies(self.current_keyspace)
         elif what == 'cluster':
@@ -1416,18 +1400,19 @@ class Shell(cmd.Cmd):
         See HELP TYPES for information on the supported data storage types.
         """
 
+        ks = self.cql_unprotect_name(parsed.get_binding('ksname', None))
+        cf = self.cql_unprotect_name(parsed.get_binding('cfname'))
+        colname = self.cql_unprotect_name(parsed.get_binding('colname', None))
+
         params = {}
-        for paramname in ('ks', 'cf', 'colname'):
-            val = parsed.get_binding(paramname, None)
-            params[paramname] = self.cql_unprotect_name(val)
         for paramname in ('names', 'values', 'colvalues'):
             val = parsed.get_binding(paramname, None)
             params[paramname] = self.cql_unprotect_value(val)
-        if params['ks'] is None:
+        if ks is None:
             if self.current_keyspace is None:
                 self.printerr('Error: not in any keyspace.')
                 return
-            params['ks'] = self.current_keyspace
+            ks = self.current_keyspace
 
         for overridetype in ('names', 'values', 'colvalues'):
             cqltype = params[overridetype]
@@ -1438,8 +1423,7 @@ class Shell(cmd.Cmd):
             except KeyError:
                 self.printerr('Error: validator type %s not found.' % cqltype)
             else:
-                self.add_assumption(params['ks'], params['cf'], params['colname'],
-                                    overridetype, validator_class)
+                self.add_assumption(ks, cf, colname, overridetype, validator_class)
 
     def do_source(self, parsed):
         """

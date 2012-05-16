@@ -377,6 +377,7 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
             return name
         return cls.cql2_escape_name(name)
 
+    # XXX: this doesn't really belong here.
     @classmethod
     def is_counter_col(cls, cfdef, colname):
         col_info = [cm for cm in cfdef.column_metadata if cm.name == colname]
@@ -495,7 +496,11 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 
 <consistencylevel> ::= cl=<identifier> ;
 
-<storageType> ::= typename=( <identifier> | <stringLiteral> );
+<storageType> ::= typename=( <identifier> | <stringLiteral> ) ;
+
+<keyspaceName> ::= ksname=<name> ;
+
+<columnFamilyName> ::= ( ksname=<name> "." )? cfname=<name> ;
 '''
 
 @completer_for('consistencylevel', 'cl')
@@ -506,18 +511,37 @@ def cl_completer(ctxt, cass):
 def storagetype_completer(ctxt, cass):
     return CqlRuleSet.cql_types
 
-syntax_rules += r'''
-<useStatement> ::= "USE" ksname=<name>
-                 ;
-'''
-
-@completer_for('useStatement', 'ksname')
-def use_ks_completer(ctxt, cass):
+@completer_for('keyspaceName', 'ksname')
+def ks_name_completer(ctxt, cass):
     return map(maybe_escape_name, cass.get_keyspace_names())
 
+@completer_for('columnFamilyName', 'ksname')
+def cf_ks_name_completer(ctxt, cass):
+    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
+
+@completer_for('columnFamilyName', 'cfname')
+def cf_name_completer(ctxt, cass):
+    ks = ctxt.get_binding('ksname', None)
+    if ks is not None:
+        ks = dequote_name(ks)
+    try:
+        cfnames = cass.get_columnfamily_names(ks)
+    except Exception:
+        if ks is None:
+            return ()
+        raise
+    return map(maybe_escape_name, cfnames)
+
+def get_cfdef(ctxt, cass):
+    ks = ctxt.get_binding('ksname', None)
+    cf = ctxt.get_binding('cfname')
+    return cass.get_columnfamily(cf, ksname=ks)
+
 syntax_rules += r'''
+<useStatement> ::= "USE" ksname=<keyspaceName>
+                 ;
 <selectStatement> ::= "SELECT" <whatToSelect>
-                        "FROM" ( selectks=<name> "." )? selectsource=<name>
+                        "FROM" cf=<columnFamilyName>
                           ("USING" "CONSISTENCY" <consistencylevel>)?
                           ("WHERE" <selectWhereClause>)?
                           ("LIMIT" <integer>)?
@@ -534,39 +558,15 @@ syntax_rules += r'''
                  ;
 '''
 
-@completer_for('selectStatement', 'selectsource')
-def select_source_completer(ctxt, cass):
-    ks = ctxt.get_binding('selectks', None)
-    if ks is not None:
-        ks = dequote_name(ks)
-    try:
-        cfnames = cass.get_columnfamily_names(ks)
-    except Exception:
-        if ks is None:
-            return ()
-        raise
-    return map(maybe_escape_name, cfnames)
-
-@completer_for('selectStatement', 'selectks')
-def select_keyspace_completer(ctxt, cass):
-    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
-
 @completer_for('selectWhereClause', 'keyname')
 def select_where_keyname_completer(ctxt, cass):
-    ksname = ctxt.get_binding('selectks')
-    if ksname is not None:
-        ksname = dequote_name(ksname)
-    selectsource = dequote_name(ctxt.get_binding('selectsource'))
-    cfdef = cass.get_columnfamily(selectsource, ksname=ksname)
+    cfdef = get_cfdef(ctxt, cass)
     return [cfdef.key_alias if cfdef.key_alias is not None else 'KEY']
 
 @completer_for('relation', 'rel_lhs')
 def select_relation_lhs_completer(ctxt, cass):
-    ksname = ctxt.get_binding('selectks')
-    if ksname is not None:
-        ksname = dequote_name(ksname)
-    selectsource = dequote_name(ctxt.get_binding('selectsource'))
-    return map(maybe_escape_name, cass.filterable_column_names(selectsource, ksname=ksname))
+    cfdef = get_cfdef(ctxt, cass)
+    return map(maybe_escape_name, cass.filterable_column_names(cfdef))
 
 @completer_for('whatToSelect', 'countparens')
 def select_count_parens_completer(ctxt, cass):
@@ -577,7 +577,7 @@ explain_completion('whatToSelect', 'rangestart', '<range_start>')
 explain_completion('whatToSelect', 'rangeend', '<range_end>')
 
 syntax_rules += r'''
-<insertStatement> ::= "INSERT" "INTO" ( insertks=<name> "." )? insertcf=<name>
+<insertStatement> ::= "INSERT" "INTO" cf=<columnFamilyName>
                                "(" keyname=<colname> ","
                                    [colname]=<colname> ( "," [colname]=<colname> )* ")"
                       "VALUES" "(" <term> "," <term> ( "," <term> )* ")"
@@ -590,27 +590,9 @@ syntax_rules += r'''
                 ;
 '''
 
-@completer_for('insertStatement', 'insertks')
-def insert_ks_completer(ctxt, cass):
-    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
-
-@completer_for('insertStatement', 'insertcf')
-def insert_cf_completer(ctxt, cass):
-    ks = ctxt.get_binding('insertks', None)
-    if ks is not None:
-        ks = dequote_name(ks)
-    try:
-        cfnames = cass.get_columnfamily_names(ks)
-    except Exception:
-        if ks is None:
-            return ()
-        raise
-    return map(maybe_escape_name, cfnames)
-
 @completer_for('insertStatement', 'keyname')
 def insert_keyname_completer(ctxt, cass):
-    insertcf = ctxt.get_binding('insertcf')
-    cfdef = cass.get_columnfamily(dequote_name(insertcf))
+    cfdef = get_cfdef(ctxt, cass)
     return [cfdef.key_alias if cfdef.key_alias is not None else 'KEY']
 
 explain_completion('insertStatement', 'colname')
@@ -623,7 +605,7 @@ def insert_option_completer(ctxt, cass):
     return opts
 
 syntax_rules += r'''
-<updateStatement> ::= "UPDATE" ( updateks=<name> "." )? updatecf=<name>
+<updateStatement> ::= "UPDATE" cf=<columnFamilyName>
                         ( "USING" [updateopt]=<usingOption>
                                   ( "AND" [updateopt]=<usingOption> )* )?
                         "SET" <assignment> ( "," <assignment> )*
@@ -637,23 +619,6 @@ syntax_rules += r'''
                       ;
 '''
 
-@completer_for('updateStatement', 'updateks')
-def update_cf_completer(ctxt, cass):
-    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
-
-@completer_for('updateStatement', 'updatecf')
-def update_cf_completer(ctxt, cass):
-    ks = ctxt.get_binding('updateks', None)
-    if ks is not None:
-        ks = dequote_name(ks)
-    try:
-        cfnames = cass.get_columnfamily_names(ks)
-    except Exception:
-        if ks is None:
-            return ()
-        raise
-    return map(maybe_escape_name, cfnames)
-
 @completer_for('updateStatement', 'updateopt')
 def insert_option_completer(ctxt, cass):
     opts = set('CONSISTENCY TIMESTAMP TTL'.split())
@@ -663,41 +628,41 @@ def insert_option_completer(ctxt, cass):
 
 @completer_for('assignment', 'updatecol')
 def update_col_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    cfdef = get_cfdef(ctxt, cass)
     colnames = map(maybe_escape_name, [cm.name for cm in cfdef.column_metadata])
     return colnames + [Hint('<colname>')]
 
 @completer_for('assignment', 'update_rhs')
 def update_countername_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    cfdef = get_cfdef(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
     return [maybe_escape_name(curcol)] if CqlRuleSet.is_counter_col(cfdef, curcol) else [Hint('<term>')]
 
 @completer_for('assignment', 'counterop')
 def update_counterop_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    cfdef = get_cfdef(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
     return ['+', '-'] if CqlRuleSet.is_counter_col(cfdef, curcol) else []
 
 @completer_for('updateWhereClause', 'updatefiltercol')
 def update_filtercol_completer(ctxt, cass):
-    cfname = dequote_name(ctxt.get_binding('cf'))
-    return map(maybe_escape_name, cass.filterable_column_names(cfname))
+    cfdef = get_cfdef(ctxt, cass)
+    return map(maybe_escape_name, cass.filterable_column_names(cfdef))
 
 @completer_for('updateWhereClause', 'updatefilterkey')
 def update_filterkey_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    cfdef = get_cfdef(ctxt, cass)
     return [cfdef.key_alias if cfdef.key_alias is not None else 'KEY']
 
 @completer_for('updateWhereClause', 'filter_in')
 def update_filter_in_completer(ctxt, cass):
-    cfdef = cass.get_columnfamily(dequote_name(ctxt.get_binding('cf')))
+    cfdef = get_cfdef(ctxt, cass)
     fk = ctxt.get_binding('updatefilterkey')
     return ['IN'] if fk in ('KEY', cfdef.key_alias) else []
 
 syntax_rules += r'''
 <deleteStatement> ::= "DELETE" ( [delcol]=<colname> ( "," [delcol]=<colname> )* )?
-                        "FROM" ( deleteks=<name> "." )? deletecf=<name>
+                        "FROM" cf=<columnFamilyName>
                         ( "USING" [delopt]=<deleteOption> ( "AND" [delopt]=<deleteOption> )* )?
                         "WHERE" <updateWhereClause>
                     ;
@@ -705,23 +670,6 @@ syntax_rules += r'''
                  | "TIMESTAMP" <integer>
                  ;
 '''
-
-@completer_for('deleteStatement', 'deleteks')
-def update_cf_completer(ctxt, cass):
-    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
-
-@completer_for('deleteStatement', 'deletecf')
-def delete_cf_completer(ctxt, cass):
-    ks = ctxt.get_binding('deleteks', None)
-    if ks is not None:
-        ks = dequote_name(ks)
-    try:
-        cfnames = cass.get_columnfamily_names(ks)
-    except Exception:
-        if ks is None:
-            return ()
-        raise
-    return map(maybe_escape_name, cfnames)
 
 @completer_for('deleteStatement', 'delopt')
 def delete_opt_completer(ctxt, cass):
@@ -754,26 +702,9 @@ def batch_opt_completer(ctxt, cass):
     return opts
 
 syntax_rules += r'''
-<truncateStatement> ::= "TRUNCATE" ( truncateks=<name> "." )? truncatecf=<name>
+<truncateStatement> ::= "TRUNCATE" cf=<columnFamilyName>
                       ;
 '''
-
-@completer_for('truncateStatement', 'truncateks')
-def update_cf_completer(ctxt, cass):
-    return [maybe_escape_name(ks) + '.' for ks in cass.get_keyspace_names()]
-
-@completer_for('truncateStatement', 'truncatecf')
-def truncate_cf_completer(ctxt, cass):
-    ks = ctxt.get_binding('truncateks', None)
-    if ks is not None:
-        ks = dequote_name(ks)
-    try:
-        cfnames = cass.get_columnfamily_names(ks)
-    except Exception:
-        if ks is None:
-            return ()
-        raise
-    return map(maybe_escape_name, cfnames)
 
 syntax_rules += r'''
 <createKeyspaceStatement> ::= "CREATE" "KEYSPACE" ksname=<name>
@@ -912,7 +843,7 @@ def create_index_col_completer(ctxt, cass):
     return map(maybe_escape_name, colnames)
 
 syntax_rules += r'''
-<dropKeyspaceStatement> ::= "DROP" "KEYSPACE" ksname=<name>
+<dropKeyspaceStatement> ::= "DROP" "KEYSPACE" ksname=<keyspaceName>
                           ;
 '''
 
@@ -934,7 +865,7 @@ syntax_rules += r'''
                        ;
 '''
 
-@completer_for('dropIndexStatement', 'cf')
+@completer_for('dropIndexStatement', 'indexname')
 def drop_index_completer(ctxt, cass):
     return map(maybe_escape_name, cass.get_index_names())
 
