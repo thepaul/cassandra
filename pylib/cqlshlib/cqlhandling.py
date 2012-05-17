@@ -275,6 +275,8 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
 
     @staticmethod
     def want_space_between(tok, following):
+        if following in (',', ')', ':'):
+            return False
         if tok[0] == 'op' and tok[1] in (',', ')', '='):
             return True
         if tok[0] == 'stringLiteral' and following[0] != ';':
@@ -313,23 +315,38 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
         return hints + completions
 
     def cql_complete_multiple(self, text, first, init_bindings, startsymbol='Start'):
+        debug = init_bindings.get('*DEBUG*', False)
         try:
             completions, hints = self.cql_complete_single(text + first, '', init_bindings,
                                                           startsymbol=startsymbol)
         except Exception:
+            if debug:
+                print "** completion expansion had a problem:"
+                traceback.print_exc()
             return first
         if hints:
             if not first[-1].isspace():
                 first += ' '
+            if debug:
+                print "** completion expansion found hints: %r" % (hints,)
             return first
         if len(completions) == 1 and completions[0] != '':
+            if debug:
+                print "** Got another completion: %r." % (completions[0],)
+            if completions[0][0] in (',', ')', ':') and first[-1] == ' ':
+                first = first[:-1]
             first += completions[0]
         else:
             common_prefix = util.find_common_prefix(completions)
-            if common_prefix != '':
-                first += common_prefix
-            else:
+            if common_prefix == '':
                 return first
+            if common_prefix[0] in (',', ')', ':') and first[-1] == ' ':
+                first = first[:-1]
+            if debug:
+                print "** Got a partial completion: %r." % (common_prefix,)
+            first += common_prefix
+        if debug:
+            print "** New total completion: %r. Checking for further matches...\n" % (first,)
         return self.cql_complete_multiple(text, first, init_bindings, startsymbol=startsymbol)
 
     @classmethod
