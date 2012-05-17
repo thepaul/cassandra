@@ -459,12 +459,22 @@ def create_ks_optval_completer(ctxt, cass):
 
 syntax_rules += r'''
 <createColumnFamilyStatement> ::= "CREATE" ( "COLUMNFAMILY" | "TABLE" )
-                                    ( ks=<keyspaceName> "." )? cf=<columnFamilyName>
-                                    "(" keyalias=<cident> <storageType> "PRIMARY" "KEY"
-                                        ( "," colname=<cident> <storageType> )* ")"
+                                    ( ks=<keyspaceName> "." )? cf=<cfOrKsName>
+                                    "(" ( <singleKeyCfSpec> | <compositeKeyCfSpec> ) ")"
                                    ( "WITH" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal>
                                      ( "AND" [cfopt]=<cfOptionName> "=" [optval]=<cfOptionVal> )* )?
                                 ;
+
+<singleKeyCfSpec> ::= keyalias=<cident> <storageType> "PRIMARY" "KEY"
+                      ( "," colname=<cident> <storageType> )*
+                    ;
+
+<compositeKeyCfSpec> ::= [newcolname]=<cident> <storageType>
+                         "," [newcolname]=<cident> <storageType>
+                         ( "," [newcolname]=<cident> <storageType> )*
+                         "," "PRIMARY" k="KEY" p="(" [pkey]=<cident>
+                                                     ( c="," [pkey]=<cident> )* ")"
+                       ;
 
 <cfOptionName> ::= cfoptname=<identifier> ( cfoptsep=":" cfsubopt=( <identifier> | <wholenumber> ) )?
                  ;
@@ -476,13 +486,40 @@ syntax_rules += r'''
                 ;
 '''
 
-explain_completion('createColumnFamilyStatement', 'keyalias', '<new_key_name>')
 explain_completion('createColumnFamilyStatement', 'cf', '<new_table_name>')
-explain_completion('createColumnFamilyStatement', 'colname', '<new_column_name>')
+explain_completion('singleKeyCfSpec', 'keyalias', '<new_key_name>')
+explain_completion('singleKeyCfSpec', 'colname', '<new_column_name>')
+explain_completion('compositeKeyCfSpec', 'newcolname', '<new_column_name>')
+
+@completer_for('compositeKeyCfSpec', 'pkey')
+def create_cf_composite_key_declaration(ctxt, cass):
+    cols_declared = ctxt.get_binding('newcolname')
+    pieces_already = ctxt.get_binding('pkey', ())
+    while cols_declared[0] in pieces_already:
+        cols_declared = cols_declared[1:]
+        if len(cols_declared) < 2:
+            return ()
+    return [maybe_escape_name(cols_declared[0])]
+
+@completer_for('compositeKeyCfSpec', 'k')
+def create_cf_composite_primary_key_keyword_completer(ctxt, cass):
+    return ['KEY (']
+
+@completer_for('compositeKeyCfSpec', 'p')
+def create_cf_composite_primary_key_paren_completer(ctxt, cass):
+    return ['(']
+
+@completer_for('compositeKeyCfSpec', 'c')
+def create_cf_composite_primary_key_comma_completer(ctxt, cass):
+    cols_declared = ctxt.get_binding('newcolname')
+    pieces_already = ctxt.get_binding('pkey', ())
+    if len(pieces_already) >= len(cols_declared) - 1:
+        return ()
+    return [',']
 
 @completer_for('cfOptionName', 'cfoptname')
 def create_cf_option_completer(ctxt, cass):
-    return [c[0] for c in CqlRuleSet.columnfamily_options] + \
+    return list(CqlRuleSet.columnfamily_layout_options) + \
            [c[0] + ':' for c in CqlRuleSet.columnfamily_map_options]
 
 @completer_for('cfOptionName', 'cfoptsep')
@@ -530,7 +567,7 @@ def create_cf_option_val_completer(ctxt, cass):
         return ["'<obsolete_option>'"]
     if this_opt in ('comparator', 'default_validation'):
         return CqlRuleSet.cql_types
-    if this_opt == 'read_repair_chance':
+    if this_opt in ('read_repair_chance', 'bloom_filter_fp_chance'):
         return [Hint('<float_between_0_and_1>')]
     if this_opt == 'replicate_on_write':
         return [Hint('<yes_or_no>')]
