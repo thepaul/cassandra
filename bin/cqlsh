@@ -219,7 +219,8 @@ cqlsh_extra_syntax_rules = r'''
 <captureCommand> ::= "CAPTURE" ( fname=( <stringLiteral> | "OFF" ) )?
                    ;
 
-<debugCommand> ::= "DEBUG"
+# avoiding just "DEBUG" so that this rule doesn't get treated as a terminal
+<debugCommand> ::= "DEBUG" "THINGS"?
                  ;
 
 <helpCommand> ::= ( "HELP" | "?" ) [topic]=( <identifier> | <stringLiteral> )*

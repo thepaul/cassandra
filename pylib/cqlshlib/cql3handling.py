@@ -38,7 +38,7 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
         'begin', 'apply', 'batch', 'truncate', 'delete', 'in', 'create',
         'keyspace', 'schema', 'columnfamily', 'table', 'index', 'on', 'drop',
         'primary', 'into', 'values', 'timestamp', 'ttl', 'alter', 'add', 'type',
-        'compact', 'storage', 'order', 'by', 'asc', 'desc', 'token'
+        'compact', 'storage', 'order', 'by', 'asc', 'desc', 'clustering', 'token'
     ))
 
     columnfamily_layout_options = (
@@ -168,8 +168,9 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 <extendedTerm> ::= token="TOKEN" "(" <term> ")"
                  | <term>
                  ;
-<cident> ::= <term>
+<cident> ::= <quotedName>
            | <identifier>
+           | <unreservedKeyword>
            ;
 <colname> ::= <cident> ;   # just an alias
 
@@ -195,7 +196,15 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                           | <alterTableStatement>
                           ;
 
-<consistencylevel> ::= cl=<identifier> ;
+<consistencylevel> ::= <K_ONE>
+                     | <K_QUORUM>
+                     | <K_ALL>
+                     | <K_ANY>
+                     | <K_LOCAL_QUORUM>
+                     | <K_EACH_QUORUM>
+                     | <K_TWO>
+                     | <K_THREE>
+                     ;
 
 <storageType> ::= typename=( <identifier> | <stringLiteral> ) ;
 
@@ -203,16 +212,27 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 
 <keyspaceName> ::= ksname=<cfOrKsName> ;
 
-<cfOrKsName> ::= <identifier> | <quotedName> ;
+<cfOrKsName> ::= <identifier>
+               | <quotedName>
+               | <unreservedKeyword>;
+
+<unreservedKeyword> ::= nocomplete=
+                        ( <K_KEY>
+                        | <K_CONSISTENCY>
+                        | <K_CLUSTERING>
+                        # | <K_COUNT>  -- to get count(*) completion, treat count as reserved
+                        | <K_TTL>
+                        | <K_COMPACT>
+                        | <K_STORAGE>
+                        | <K_TYPE>
+                        | <K_VALUES>
+                        | <consistencylevel> )
+                      ;
 '''
 
 @completer_for('extendedTerm', 'token')
 def token_word_completer(ctxt, cass):
     return ['TOKEN(']
-
-@completer_for('consistencylevel', 'cl')
-def cl_completer(ctxt, cass):
-    return CqlRuleSet.consistency_levels
 
 @completer_for('storageType', 'typename')
 def storagetype_completer(ctxt, cass):
@@ -238,6 +258,13 @@ def cf_name_completer(ctxt, cass):
             return ()
         raise
     return map(maybe_escape_name, cfnames)
+
+@completer_for('unreservedKeyword', 'nocomplete')
+def unreserved_keyword_completer(ctxt, cass):
+    # we never want to provide completions through this production;
+    # this is always just to allow use of some keywords as column
+    # names, CF names, property values, etc.
+    return ()
 
 def get_cf_layout(ctxt, cass):
     ks = ctxt.get_binding('ksname', None)
