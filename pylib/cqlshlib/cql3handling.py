@@ -90,7 +90,7 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
     def cql3_escape_name(name):
         return '"%s"' % name.replace('"', '""')
 
-    valid_cql3_word_re = re.compile(r'^[a-z][0-9a-z_]*$', re.I)
+    valid_cql3_word_re = re.compile(r'^[a-z][0-9a-z_]*$')
 
     @classmethod
     def is_valid_cql3_name(cls, s):
