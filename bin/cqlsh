@@ -1187,7 +1187,7 @@ class Shell(cmd.Cmd):
             for cf in ksdef.cf_defs:
                 out.write('\n')
                 # yes, cf might be looked up again. oh well.
-                self.print_recreate_columnfamily(ksname, cf.name, out)
+                self.print_recreate_columnfamily(ksdef.name, cf.name, out)
 
     def print_recreate_columnfamily(self, ksname, cfname, out):
         """
