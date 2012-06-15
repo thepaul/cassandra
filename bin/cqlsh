@@ -1419,7 +1419,7 @@ class Shell(cmd.Cmd):
 
           Imports CSV data into a Cassandra table.
 
-        COPY <table_name> [ ( column [AND ...] ) ]
+        COPY <table_name> [ ( column [, ...] ) ]
              FROM ( '<filename>' | STDIN )
              [ WITH <option>='value' [AND ...] ];
 
