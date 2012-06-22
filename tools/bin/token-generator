@@ -1,113 +1,149 @@
 #!/usr/bin/env python
 
-import copy
 import json
 import sys
+import math
+import optparse
 
-global_data = {}
-global_data['MAXRANGE'] = (2**127)
+usage = "%prog <nodes_in_dc1> [<nodes_in_dc2> [...]]"
 
-def calculate_tokens():
-    """Sets the default tokens that each datacenter has to be spaced with."""
+TESTMODE_RINGRANGE = 1000
 
-    tokens = {}
-    for dc in range(len(global_data['datacenters'])):
-        tokens[dc] = {}
+parser = optparse.OptionParser(usage=usage)
+parser.add_option('--ringrange', type='int',
+                  help='Specify a numeric maximum token value for your ring, '
+                       'different from the default value of 2^127.')
 
-        for i in range(int(global_data['datacenters'][dc])):
-            tokens[dc][i] = (i * global_data['MAXRANGE'] / int(global_data['datacenters'][dc]))
+parser.add_option('--test', action='store_true',
+                  help='Run in test mode, outputting an HTML file to display '
+                       'various generated ring arrangements. Overrides '
+                       '--ringrange to be %d.' % TESTMODE_RINGRANGE)
 
-    global_data['tokens'] = tokens
+parser.add_option('--test-colors', help=optparse.SUPPRESS_HELP)
+parser.add_option('--test-linelength', type='int', help=optparse.SUPPRESS_HELP)
+parser.add_option('--test-graphsize', type='int', help=optparse.SUPPRESS_HELP)
+parser.add_option('--test-output', help=optparse.SUPPRESS_HELP)
 
-def two_closest_tokens(this_dc, this_token):
-    """Returns the two closests tokens to this token within the entire cluster."""
+parser.set_defaults(
+    ringrange=(1<<127),
 
-    tokens = get_offset_tokens()
-    lower_bound = 0
-    upper_bound = global_data['MAXRANGE']
+    # durr
+    test=False,
 
-    for that_dc in tokens:
-        if this_dc == that_dc:
-            # Don't take the current datacenter's nodes into consideration
-            continue
+    # comma-separated list of HTML color codes, used in order to represent
+    # respective datacenter nodes
+    test_colors='#000,#00F,#0F0,#F00,#0FF,#FF0,#F0F',
 
-        that_dc = tokens[that_dc]
+    # the length of the rendered per-node rays
+    test_linelength=80,
 
-        for that_node in that_dc:
-            that_token = that_dc[that_node]
+    # size of the per-test graphs
+    test_graphsize=100,
 
-            if that_token <= this_token and that_token > lower_bound:
-                lower_bound = that_token
-            if that_token > this_token and that_token < upper_bound:
-                upper_bound = that_token
+    # name of output HTML file to generate, or - for stdout. will clobber
+    # any preexisting file!
+    test_output='tokentool.html',
+)
 
-    return lower_bound, upper_bound
+class Ring:
+    def __init__(self, dc_counts, ringrange):
+        self.dc_counts = dc_counts
+        self.ringrange = ringrange
 
-def get_offset_tokens():
-    """Calculates what the tokens are with their calculated offsets."""
+    def calculate_tokens(self):
+        """Sets the default tokens that each datacenter has to be spaced with."""
 
-    offset_tokens = copy.deepcopy(global_data['tokens'])
-    for dc in offset_tokens:
-        if dc == 0:
-            # Never offset the first datacenter
-            continue
+        tokens = {}
+        for dc in range(len(self.dc_counts)):
+            tokens[dc] = {}
 
-        # Apply all offsets
-        for node in offset_tokens[dc]:
-            offset = global_data['offsets'][dc] if dc in global_data['offsets'] else 0
-            offset_tokens[dc][node] = (offset_tokens[dc][node] + offset) % global_data['MAXRANGE']
-    return offset_tokens
+            for i in range(int(self.dc_counts[dc])):
+                tokens[dc][i] = (i * self.ringrange / int(self.dc_counts[dc]))
 
-def calculate_offsets():
-    """Find what the offsets should be for each datacenter."""
+        return tokens
 
-    exit_loop = False
-    while not exit_loop:
-        exit_loop = True
+    def two_closest_tokens(self, tokens, this_dc, this_token):
+        """Returns the two closests tokens to this token within the entire cluster."""
 
-        tokens = get_offset_tokens()
-        for this_dc in range(len(tokens)):
-            if this_dc == 0:
+        lower_bound = 0
+        upper_bound = self.ringrange
+
+        for that_dc in tokens:
+            if this_dc == that_dc:
+                # Don't take the current datacenter's nodes into consideration
+                continue
+
+            that_dc = tokens[that_dc]
+
+            for that_node in that_dc:
+                that_token = that_dc[that_node]
+
+                if that_token <= this_token and that_token > lower_bound:
+                    lower_bound = that_token
+                if that_token > this_token and that_token < upper_bound:
+                    upper_bound = that_token
+
+        return lower_bound, upper_bound
+
+    def get_offset_tokens(self, tokens, offsets):
+        """Calculates what the tokens are with their calculated offsets."""
+
+        offset_tokens = tokens.copy()
+        for dc in offset_tokens:
+            if dc == 0:
                 # Never offset the first datacenter
                 continue
 
-            tokens = get_offset_tokens()
-            global_data['offsets'][this_dc] = global_data['offsets'][this_dc] if this_dc in global_data['offsets'] else 0
-            previous_offset = global_data['offsets'][this_dc]
-            running_offset = []
+            # Apply all offsets
+            for node in offset_tokens[dc]:
+                offset = offsets[dc] if dc in offsets else 0
+                offset_tokens[dc][node] = (offset_tokens[dc][node] + offset) % self.ringrange
+        return offset_tokens
 
-            # Get all the offsets, per token, that place each token in the ideal spot
-            # away from all other tokens in the cluster
-            for this_node in range(len(tokens[this_dc])):
-                this_token = tokens[this_dc][this_node]
-                lower_bound, upper_bound = two_closest_tokens(this_dc, this_token)
-                perfect_spot = (upper_bound - lower_bound) / 2 + lower_bound
-                this_offset = perfect_spot - this_token
-                running_offset.append(this_offset)
+    def calculate_offsets(self, tokens):
+        """Find what the offsets should be for each datacenter."""
 
-            # Set this datacenters offset to be an average of all the running offsets
-            if len(running_offset):
-                global_data['offsets'][this_dc] += sum(running_offset) / len(running_offset)
+        offsets = {}
 
-            # Vote on exiting the loop if this datacenter did not change it's offset
-            if global_data['offsets'][this_dc] - previous_offset > 0:
-                exit_loop = False
+        exit_loop = False
+        while not exit_loop:
+            exit_loop = True
 
-# ===========================
-# Main Starters
+            tokens = self.get_offset_tokens(tokens, offsets)
+            for this_dc in range(len(tokens)):
+                if this_dc == 0:
+                    # Never offset the first datacenter
+                    continue
 
-def print_tokens(tokens=False):
-    if not tokens:
-        tokens = get_offset_tokens()
-    # print 'Offsets: ', global_data['offsets']
+                tokens = self.get_offset_tokens(tokens, offsets)
+                offsets[this_dc] = offsets[this_dc] if this_dc in offsets else 0
+                previous_offset = offsets[this_dc]
+                running_offset = []
+
+                # Get all the offsets, per token, that place each token in the ideal spot
+                # away from all other tokens in the cluster
+                for this_node in range(len(tokens[this_dc])):
+                    this_token = tokens[this_dc][this_node]
+                    lower_bound, upper_bound = self.two_closest_tokens(tokens, this_dc, this_token)
+                    perfect_spot = (upper_bound - lower_bound) / 2 + lower_bound
+                    this_offset = perfect_spot - this_token
+                    running_offset.append(this_offset)
+
+                # Set this datacenters offset to be an average of all the running offsets
+                if len(running_offset):
+                    offsets[this_dc] += sum(running_offset) / len(running_offset)
+
+                # Vote on exiting the loop if this datacenter did not change it's offset
+                if offsets[this_dc] - previous_offset > 0:
+                    exit_loop = False
+
+        return offsets
+
+
+def print_tokens(tokens):
     print json.dumps(tokens, sort_keys=True, indent=4)
 
-    if 'test' in global_data:
-        calc_tests(tokens)
-
-def run(datacenters):
-    global_data['offsets'] = {}
-
+def calculate_ideal_tokens(datacenters, opts):
     # Calculate the amount of datacenters in the beginning
     # of the list that have no nodes
     # Because the first DC remains stable
@@ -117,12 +153,12 @@ def run(datacenters):
             leading_blank_centers += 1
         else:
             break
-    datacenters = datacenters[leading_blank_centers:]
 
-    global_data['datacenters'] = datacenters
-    calculate_tokens()
-    calculate_offsets()
-    returning_tokens = get_offset_tokens()
+    ring = Ring(datacenters[leading_blank_centers:], ringrange=opts.ringrange)
+
+    tokens = ring.calculate_tokens()
+    offsets = ring.calculate_offsets(tokens)
+    returning_tokens = ring.get_offset_tokens(tokens, offsets)
 
     # Add the preceding blank datacenters back in
     if leading_blank_centers:
@@ -135,33 +171,13 @@ def run(datacenters):
             i += 1
         returning_tokens = translated_tokens
 
-    # print returning_tokens
     return returning_tokens
 
-# ===========================
 
 # ===========================
 # Tests
 
-def calc_tests(tokens):
-    import math
-    these_calcs = {}
-
-    for this_dc in range(len(tokens)):
-        these_calcs[this_dc] = []
-        for node in range(len(tokens[this_dc])):
-            degrees = ((tokens[this_dc][node]) * 360 / global_data['MAXRANGE']) + 180
-            radians = degrees * math.pi / 180
-
-            center = global_data['graph_size'];
-            x2 = center + global_data['length_of_line'] * math.sin(radians);
-            y2 = center + global_data['length_of_line'] * math.cos(radians);
-            these_calcs[this_dc].append((x2, y2))
-
-    global_data['coordinates'].append(these_calcs)
-
-def write_html():
-    html = """<!DOCTYPE html>
+html_template = """<!DOCTYPE html>
 <html>
 <body>
 
@@ -169,45 +185,68 @@ def write_html():
 
 </body>
 </html>
-
 """
-    default_chart = """
-    <canvas id="{0}" width="{2}" height="{2}" style="border:1px solid #c3c3c3;">
-        Your browser does not support the canvas element.
-    </canvas>
-    <script type="text/javascript">
-        var c=document.getElementById("{0}");
-        var ctx=c.getContext("2d");\n%s
-    </script>
-    """
-    default_chart_piece = """
-        ctx.beginPath();
-        ctx.strokeStyle = "%s";
-        ctx.moveTo({1},{1});
-        ctx.lineTo(%s,%s);
-        ctx.stroke();
-        ctx.closePath();
-    """
-    all_charts = ''
-    for chart_set in range(len(global_data['coordinates'])):
-        chart_index = chart_set
-        chart_set = global_data['coordinates'][chart_set]
-        chart_piece = ''
-        for dc in range(len(chart_set)):
-            for coordinates in chart_set[dc]:
-                chart_piece += default_chart_piece % (global_data['colors'][dc], coordinates[0], coordinates[1])
-        this_chart = default_chart % chart_piece
-        all_charts += this_chart.format(chart_index, global_data['graph_size'], global_data['graph_size'] * 2)
-    with open('tokentool.html', 'w') as f:
-        f.write(html % all_charts)
 
-def run_tests():
-    global_data['test'] = True
-    global_data['coordinates'] = []
-    global_data['graph_size'] = 100
-    global_data['length_of_line'] = 80
-    global_data['colors'] = ['#000', '#00F', '#0F0', '#F00', '#0FF', '#FF0', '#F0F']
-    global_data['MAXRANGE'] = 1000
+chart_template = """
+<canvas id="{0}" width="{2}" height="{2}" style="border:1px solid #c3c3c3;">
+    Your browser does not support the canvas element.
+</canvas>
+<script type="text/javascript">
+    var c=document.getElementById("{0}");
+    var ctx=c.getContext("2d");
+%s
+</script>
+"""
+
+chart_piece_template = """
+    ctx.beginPath();
+    ctx.strokeStyle = "%s";
+    ctx.moveTo({1},{1});
+    ctx.lineTo(%s,%s);
+    ctx.stroke();
+    ctx.closePath();
+"""
+
+class RingRenderer:
+    def __init__(self, ringrange, linelength, graphsize, colors):
+        self.ringrange = ringrange
+        self.linelength = linelength
+        self.graphsize = graphsize
+        self.colors = colors
+
+    def calc_tests(self, tokens):
+        these_calcs = {}
+
+        for this_dc in range(len(tokens)):
+            these_calcs[this_dc] = []
+            for node in range(len(tokens[this_dc])):
+                degrees = ((tokens[this_dc][node]) * 360 / self.ringrange) + 180
+                radians = degrees * math.pi / 180
+
+                center = self.graphsize
+                x2 = center + self.linelength * math.sin(radians);
+                y2 = center + self.linelength * math.cos(radians);
+                these_calcs[this_dc].append((x2, y2))
+
+        return these_calcs
+
+    def write_html(self, coordinate_sets, output=sys.stdout):
+        all_charts = ''
+        for chart_set in range(len(coordinate_sets)):
+            chart_index = chart_set
+            chart_set = coordinate_sets[chart_set]
+            chart_piece = ''
+            for dc in range(len(chart_set)):
+                for x, y in chart_set[dc]:
+                    chart_piece += chart_piece_template % (self.colors[dc], x, y)
+            this_chart = chart_template % chart_piece
+            all_charts += this_chart.format(chart_index, self.graphsize, self.graphsize * 2)
+        output.write(html_template % all_charts)
+
+def run_tests(opts):
+    colorlist = [s.strip() for s in opts.test_colors.split(',')]
+    renderer = RingRenderer(ringrange=opts.ringrange, linelength=opts.test_linelength,
+                            graphsize=opts.test_graphsize, colors=colorlist)
 
     tests = [
         [1],
@@ -229,20 +268,34 @@ def run_tests():
         [4],
         [3,3,6,4,2]
     ]
+
+    test_coord_sets = []
     for test in tests:
-        print_tokens(run(test))
-    write_html()
+        tokens = calculate_ideal_tokens(test, opts)
+        print_tokens(tokens)
+        test_coord_sets.append(renderer.calc_tests(tokens))
+
+    with open(opts.test_output, 'w') as f:
+        renderer.write_html(test_coord_sets, f)
 
 # ===========================
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        if sys.argv[1] == '--test':
-            run_tests()
-            sys.exit(0)
-        datacenters = sys.argv[1:]
-    else:
-        print "Usage: ./tokentoolv2.py <nodes_in_dc> [<nodes_in_dc>]..."
+    opts, args = parser.parse_args()
+
+    if opts.test:
+        opts.ringrange = TESTMODE_RINGRANGE
+        run_tests(opts)
         sys.exit(0)
-    run(datacenters)
-    print_tokens()
+    if opts.test_output == '-':
+        opts.test_output = '/dev/stdout'
+
+    if len(args) == 0:
+        parser.error('No datacenter sizes given.')
+
+    try:
+        datacenters = map(int, args)
+    except ValueError, e:
+        parser.error('Arguments should be integers.')
+
+    print_tokens(calculate_ideal_tokens(datacenters, opts))
