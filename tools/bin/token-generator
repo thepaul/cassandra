@@ -8,8 +8,6 @@ from itertools import takewhile
 
 usage = "%prog <nodes_in_dc1> [<nodes_in_dc2> [...]]"
 
-TESTMODE_RINGRANGE = 1000
-
 parser = optparse.OptionParser(usage=usage)
 parser.add_option('--ringrange', type='int',
                   help='Specify a numeric maximum token value for your ring, '
@@ -17,8 +15,7 @@ parser.add_option('--ringrange', type='int',
 
 parser.add_option('--test', action='store_true',
                   help='Run in test mode, outputting an HTML file to display '
-                       'various generated ring arrangements. Overrides '
-                       '--ringrange to be %d.' % TESTMODE_RINGRANGE)
+                       'various generated ring arrangements.')
 
 parser.add_option('--test-colors', help=optparse.SUPPRESS_HELP)
 parser.add_option('--test-linelength', type='int', help=optparse.SUPPRESS_HELP)
@@ -48,85 +45,32 @@ parser.set_defaults(
 
 class Ring:
     def __init__(self, dc_counts, ringrange):
-        self.dc_counts = dc_counts
         self.ringrange = ringrange
-        self.origtokens = self.calculate_tokens()
+        self.origtokens = self.calculate_tokens(dc_counts)
 
-    def calculate_tokens(self):
+    def calculate_tokens(self, dc_counts):
         """Sets the default tokens that each datacenter has to be spaced with."""
 
-        return [[i * self.ringrange // count for i in range(count)] for count in self.dc_counts]
-
-    def add_tokens(self, t1, t2):
-        return (t1 + t2) % self.ringrange
-
-    def add_to_all_tokens(self, toklist, offset):
-        return [self.add_tokens(t, offset) for t in toklist]
-
-    def neighbor_tokens(self, tokens, this_dc, this_token):
-        """
-        Returns the tokens immediately preceding and following the given
-        token within the ring space, excluding tokens from the same dc.
-        """
-
-        preceding = 0
-        following = self.ringrange
-
-        for toks in (tokens[:this_dc] + tokens[this_dc+1:]):
-            for that_token in toks:
-                if preceding < that_token <= this_token:
-                    preceding = that_token
-                if this_token < that_token < following:
-                    following = that_token
-
-        return preceding, following
-
-    def get_offset_tokens(self, offsets):
-        """Calculates what the tokens are with their calculated offsets."""
-        return map(self.add_to_all_tokens, self.origtokens, offsets)
+        return [[i * self.ringrange // count for i in range(count)] for count in dc_counts]
 
     def calculate_offset_tokens(self):
-        """Find what the offsets should be for each datacenter."""
-
-        offsets = [0] * len(self.origtokens)
-        while True:
-            tokens = self.get_offset_tokens(offsets)
-            oldoffsets = offsets[:]
-            for dcnum, dctokens in enumerate(tokens):
-                if dcnum == 0 or len(dctokens) == 0:
-                    continue
-                tokens = self.get_offset_tokens(offsets)
-
-                # Get all the offsets, per token, that place each token in the ideal spot
-                # away from all other tokens in the cluster
-                running_offset_sum = 0
-                for this_token in dctokens:
-                    preceding, following = self.neighbor_tokens(tokens, dcnum, this_token)
-                    perfect_spot = (following + preceding) // 2
-                    running_offset_sum += perfect_spot - this_token
-
-                # Set this datacenters offset to be an average of all the running offsets
-                offsets[dcnum] += running_offset_sum // len(dctokens)
-
-            # Only exit the loop none of the offsets increased
-            if all(newoff <= oldoff for (newoff, oldoff) in zip(offsets, oldoffsets)):
-                return tokens
+        alltoks = [(t, dc) for (dc, toks) in enumerate(self.origtokens) for t in toks]
+        final = [[] for x in self.origtokens]
+        for pos, (t, dc) in enumerate(sorted(alltoks)):
+            final[dc].append(pos * self.ringrange // len(alltoks))
+        return final
 
 
-def print_tokens(tokens):
-    print json.dumps(tokens, sort_keys=True, indent=4)
+def print_tokens(tokens, opts, indent=0):
+    toklen = len(str(opts.ringrange)) + 1
+    indentstr = ' ' * indent
+    for dcnum, toklist in enumerate(tokens):
+        print "%sDC #%d:" % (indentstr, dcnum + 1)
+        for tnum, tok in enumerate(toklist):
+            print "%s  Node #%d: % *d" % (indentstr, tnum + 1, toklen, tok)
 
 def calculate_ideal_tokens(datacenters, ringrange):
-    # Calculate the amount of datacenters in the beginning
-    # of the list that have no nodes
-    # Because the first DC remains stable
-    leading_blank_datacenters = len(list(takewhile(lambda x: x==0, datacenters)))
-    ring = Ring(datacenters[leading_blank_datacenters:], ringrange=ringrange)
-
-    offset_tokens = ring.calculate_offset_tokens()
-
-    # Add the preceding blank datacenters back in
-    return [[]] * leading_blank_datacenters + offset_tokens
+    return Ring(datacenters, ringrange).calculate_offset_tokens()
 
 
 # ===========================
@@ -227,8 +171,9 @@ def run_tests(opts):
 
     test_coord_sets = []
     for test in tests:
+        print "Test %r" % (test,)
         tokens = calculate_ideal_tokens(test, opts.ringrange)
-        print_tokens(tokens)
+        print_tokens(tokens, opts, indent=2)
         test_coord_sets.append(renderer.calc_tests(tokens))
 
     with open(opts.test_output, 'w') as f:
@@ -242,7 +187,6 @@ if __name__ == '__main__':
     if opts.test_output == '-':
         opts.test_output = '/dev/stdout'
     if opts.test:
-        opts.ringrange = TESTMODE_RINGRANGE
         run_tests(opts)
         sys.exit(0)
 
@@ -254,4 +198,4 @@ if __name__ == '__main__':
     except ValueError, e:
         parser.error('Arguments should be integers.')
 
-    print_tokens(calculate_ideal_tokens(datacenters, opts.ringrange))
+    print_tokens(calculate_ideal_tokens(datacenters, opts.ringrange), opts)
