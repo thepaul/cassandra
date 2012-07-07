@@ -105,31 +105,31 @@ html_template = """<!DOCTYPE html>
 <html>
 <body>
 
-{generated_body}
+%(generated_body)s
 
 </body>
 </html>
-""".format
+"""
 
 chart_template = """
-<canvas id="{id}" width="{size}" height="{size}" style="border:1px solid #c3c3c3;">
+<canvas id="%(id)s" width="%(size)s" height="%(size)s" style="border:1px solid #c3c3c3;">
     Your browser does not support the canvas element.
 </canvas>
 <script type="text/javascript">
-    var c=document.getElementById("{id}");
+    var c=document.getElementById("%(id)s");
     var ctx=c.getContext("2d");
-{generated_script}
+%(generated_script)s
 </script>
-""".format
+"""
 
 chart_js_template = """
     ctx.beginPath();
-    ctx.strokeStyle = "{color}";
-    ctx.moveTo({center},{center});
-    ctx.lineTo({x},{y});
+    ctx.strokeStyle = "%(color)s";
+    ctx.moveTo(%(center)s,%(center)s);
+    ctx.lineTo(%(x)s,%(y)s);
     ctx.stroke();
     ctx.closePath();
-""".format
+"""
 
 class RingRenderer:
     border_fraction = 0.08
@@ -163,12 +163,13 @@ class RingRenderer:
             chart_code = []
             for coordlist, color in zip(chart_set, cycle(self.colors)):
                 for x, y in coordlist:
-                    chart_code.append(chart_js_template(color=color, x=x, y=y,
-                                                        center=(self.graphsize / 2)))
-            this_chart = chart_template(generated_script=''.join(chart_code),
-                                        id=chart_index, size=self.graphsize)
+                    chart_code.append(chart_js_template
+                                          % dict(color=color, x=x, y=y,
+                                                 center=(self.graphsize / 2)))
+            this_chart = chart_template % dict(generated_script=''.join(chart_code),
+                                               id=chart_index, size=self.graphsize)
             all_charts.append(this_chart)
-        return html_template(generated_body=''.join(all_charts))
+        return html_template % dict(generated_body=''.join(all_charts))
 
 # ===========================
 # Tests
