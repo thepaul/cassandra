@@ -69,16 +69,10 @@ class Ring:
         self.dc_counts = dc_counts
 
     def calculate_offset_tokens(self):
-        dcs_and_counts = list(enumerate(self.dc_counts))
-        dcs_by_count = sorted(dcs_and_counts, key=lambda d:d[1], reverse=True)
-        layout = []
-        insertion_point = 0
-        for dcnum, dccount in dcs_by_count:
-            for n in xrange(dccount):
-                layout.insert(insertion_point, dcnum)
-                insertion_point += 2
-                if insertion_point >= len(layout):
-                    insertion_point = 0
+        dcs_by_count = sorted(enumerate(self.dc_counts), key=lambda d:d[1], reverse=True)
+        biggest = dcs_by_count[0][1]
+        nodes = [dcnum for (dcnum, dccount) in dcs_by_count for x in range(dccount)]
+        layout = [nodes[n] for i in range(biggest) for n in range(i, len(nodes), biggest)]
 
         final = [[] for x in dcs_by_count]
         for pos, dc in enumerate(layout):
