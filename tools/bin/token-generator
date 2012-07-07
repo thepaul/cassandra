@@ -10,9 +10,14 @@ from time import sleep
 from itertools import cycle
 from tempfile import NamedTemporaryFile
 
+description = '''Given a list of numbers indicating the number of nodes
+in each separate datacenter, outputs a recommended list of tokens to use
+with RandomPartitioner: one for each node in each datacenter.
+'''
+
 usage = "%prog <nodes_in_dc1> [<nodes_in_dc2> [...]]"
 
-parser = optparse.OptionParser(usage=usage)
+parser = optparse.OptionParser(description=description, usage=usage)
 parser.add_option('--ringrange', type='int',
                   help='Specify a numeric maximum token value for your ring, '
                        'different from the default value of 2^127.')
@@ -85,8 +90,9 @@ def print_tokens(tokens, tokenwidth, indent=0):
     indentstr = ' ' * indent
     for dcnum, toklist in enumerate(tokens):
         print "%sDC #%d:" % (indentstr, dcnum + 1)
+        nwidth = len(str(len(toklist)))
         for tnum, tok in enumerate(toklist):
-            print "%s  Node #%d: % *d" % (indentstr, tnum + 1, tokenwidth, tok)
+            print "%s  Node #%0*d: % *d" % (indentstr, nwidth, tnum + 1, tokenwidth, tok)
 
 def calculate_ideal_tokens(datacenters, ringrange):
     return Ring(datacenters, ringrange).calculate_offset_tokens()
@@ -221,6 +227,32 @@ def write_output(html, opts):
         with open(opts.html_output, 'w') as f:
             f.write(html)
 
+def readnum(prompt, min=None, max=None):
+    while True:
+        x = raw_input(prompt + ' ')
+        try:
+            val = int(x)
+        except ValueError:
+            print "Oops, %r is not an integer. Try again.\n" % (x,)
+            continue
+        if min is not None and val < min:
+            print "Oops, the answer must be at least %d. Try again.\n" % (min,)
+        elif max is not None and val > max:
+            print "Oops, the answer must be at most %d. Try again.\n" % (max,)
+        else:
+            return val
+
+def get_dc_sizes_interactive():
+    print "Token Generator Interactive Mode"
+    print "--------------------------------"
+    print
+    dcs = readnum(" How many datacenters will participate in this Cassandra cluster?", min=1)
+    sizes = []
+    for n in xrange(dcs):
+        sizes.append(readnum(" How many nodes are in datacenter #%d?" % (n + 1), min=0))
+    print
+    return sizes
+
 def main(opts, args):
     opts.colorlist = [s.strip() for s in opts.test_colors.split(',')]
     if opts.test:
@@ -228,9 +260,9 @@ def main(opts, args):
         tokensets = run_tests(opts)
         renderer = RingRenderer(ringrange=opts.ringrange, graphsize=opts.test_graphsize,
                                 colors=opts.colorlist)
-    elif len(args) == 0:
-        parser.error('No datacenter sizes given.')
     else:
+        if len(args) == 0:
+            args = get_dc_sizes_interactive()
         try:
             datacenters = map(int, args)
         except ValueError, e:
@@ -248,4 +280,8 @@ def main(opts, args):
 
 if __name__ == '__main__':
     opts, args = parser.parse_args()
-    sys.exit(main(opts, args))
+    try:
+        res = main(opts, args)
+    except KeyboardInterrupt:
+        res = -128
+    sys.exit(res)
