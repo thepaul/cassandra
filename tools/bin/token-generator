@@ -26,6 +26,12 @@ parser.add_option('--ringrange', type='int',
 parser.add_option('--graph', action='store_true',
                   help='Show a rendering of the generated tokens as line '
                        'segments in a circle, colored according to datacenter')
+parser.add_option('-n', '--nts', action='store_const', dest='strat', const='nts',
+                  help='Optimize multi-cluster distribution for '
+                       'NetworkTopologyStrategy [default]')
+parser.add_option('-o', '--onts', action='store_const', dest='strat', const='onts',
+                  help='Optimize multi-cluster distribution for '
+                       'OldNetworkTopologyStrategy')
 
 parser.add_option('--test', action='store_true',
                   help='Run in test mode, outputting an HTML file to display '
@@ -41,6 +47,9 @@ parser.set_defaults(
 
     # whether to create (and try to display) graph output
     graph=False,
+
+    # 'nts' or 'onts'; the replication strategy for which to optimize
+    strat='nts',
 
     # durr
     test=False,
@@ -66,11 +75,35 @@ parser.set_defaults(
 )
 
 class Ring:
-    def __init__(self, dc_counts, ringrange):
+    MIN_DC_OFFSET_DIVIDER = 235
+    offset_spacer = 2
+
+    def __init__(self, dc_counts, ringrange, strategy='nts'):
         self.ringrange = ringrange
         self.dc_counts = dc_counts
+        self.calculate_offset_tokens = getattr(self, 'calc_offset_tokens_' + strategy)
 
-    def calculate_offset_tokens(self):
+    def best_per_dc_offset(self):
+        """
+        Calculate a per-dc offset for NTS DC spacing, such that there is a little
+        bit of room between nodes which would otherwise have been at the same token;
+        (hopefully) large enough that the difference can show when --graph is used,
+        but small enough that it there's no chance of the relative ordering changing.
+        """
+        lowest_division = len(self.dc_counts) * max(self.dc_counts) * self.offset_spacer
+        division = max(lowest_division, self.MIN_DC_OFFSET_DIVIDER)
+        return -self.ringrange // division
+
+    def calc_offset_tokens_nts(self):
+        dc_offset = self.best_per_dc_offset()
+        dcs = []
+        for (dcnum, dccount) in enumerate(self.dc_counts):
+            offset = dcnum * dc_offset
+            arcsize = self.ringrange // (dccount or 1)
+            dcs.append([(n * arcsize + offset) % self.ringrange for n in xrange(dccount)])
+        return dcs
+
+    def calc_offset_tokens_onts(self):
         dcs_by_count = sorted(enumerate(self.dc_counts), key=lambda d:d[1], reverse=True)
         biggest = dcs_by_count[0][1]
         nodes = [dcnum for (dcnum, dccount) in dcs_by_count for x in range(dccount)]
@@ -90,8 +123,8 @@ def print_tokens(tokens, tokenwidth, indent=0):
         for tnum, tok in enumerate(toklist):
             print "%s  Node #%0*d: % *d" % (indentstr, nwidth, tnum + 1, tokenwidth, tok)
 
-def calculate_ideal_tokens(datacenters, ringrange):
-    return Ring(datacenters, ringrange).calculate_offset_tokens()
+def calculate_ideal_tokens(datacenters, ringrange, strategy):
+    return Ring(datacenters, ringrange, strategy).calculate_offset_tokens()
 
 def file_to_url(path):
     path = os.path.abspath(path)
@@ -199,7 +232,7 @@ def run_tests(opts):
     tokensets = []
     for test in tests:
         print "Test %r" % (test,)
-        tokens = calculate_ideal_tokens(test, opts.ringrange)
+        tokens = calculate_ideal_tokens(test, opts.ringrange, opts.strat)
         print_tokens(tokens, len(str(opts.ringrange)) + 1, indent=2)
         tokensets.append(tokens)
     return tokensets
@@ -266,7 +299,7 @@ def main(opts, args):
             parser.error('Arguments should be integers.')
         renderer = RingRenderer(ringrange=opts.ringrange, graphsize=opts.graphsize,
                                 colors=opts.colorlist)
-        tokens = calculate_ideal_tokens(datacenters, opts.ringrange)
+        tokens = calculate_ideal_tokens(datacenters, opts.ringrange, opts.strat)
         print_tokens(tokens, len(str(opts.ringrange)) + 1)
         tokensets = [tokens]
 
