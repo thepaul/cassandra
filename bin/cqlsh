@@ -1609,7 +1609,7 @@ class Shell(cmd.Cmd):
                 rows += 1
         finally:
             if do_close:
-                linesource.close()
+                csvdest.close()
         return rows
 
     def prep_export_dump(self, ks, cf, columns):
