@@ -922,7 +922,7 @@ class Shell(cmd.Cmd):
             print
         statement = self.statement.getvalue()
         if statement.strip():
-            if not self.onecmd(statement + ';'):
+            if not self.onecmd(statement):
                 self.printerr('Incomplete statement at end of file')
         self.do_exit()
 
