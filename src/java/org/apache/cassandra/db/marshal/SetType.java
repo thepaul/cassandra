@@ -25,7 +25,8 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.cassandra.db.IColumn;
-import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.exceptions.ConfigurationException;
+import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
@@ -37,7 +38,7 @@ public class SetType extends CollectionType
 
     public final AbstractType<?> elements;
 
-    public static SetType getInstance(TypeParser parser) throws ConfigurationException
+    public static SetType getInstance(TypeParser parser) throws ConfigurationException, SyntaxException
     {
         List<AbstractType<?>> l = parser.getTypeParameters();
         if (l.size() != 1)

@@ -35,7 +35,7 @@ import com.google.common.base.Joiner;
 
 import org.antlr.runtime.tree.Tree;
 import org.apache.cassandra.auth.IAuthenticator;
-import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.db.ColumnFamilyStoreMBean;
 import org.apache.cassandra.db.compaction.CompactionManagerMBean;
 import org.apache.cassandra.db.compaction.OperationType;
@@ -550,7 +550,7 @@ public class CliClient
             {
                 return TypeParser.parse(compareWith);
             }
-            catch (ConfigurationException ce)
+            catch (RequestValidationException ce)
             {
                 StringBuilder errorMessage = new StringBuilder("Unknown comparator '" + compareWith + "'. ");
                 errorMessage.append("Available functions: ");
@@ -1555,7 +1555,7 @@ public class CliClient
         {
             comparator = TypeParser.parse(defaultType);
         }
-        catch (ConfigurationException e)
+        catch (RequestValidationException e)
         {
             try
             {

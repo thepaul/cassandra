@@ -43,6 +43,7 @@ import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UUIDType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
+import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.FailureDetector;
 import org.apache.cassandra.gms.Gossiper;
@@ -124,7 +125,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         StorageService.optionalTasks.scheduleWithFixedDelay(runnable, 10, 10, TimeUnit.MINUTES);
     }
 
-    private static void sendMutation(InetAddress endpoint, MessageOut<?> message) throws TimedOutException
+    private static void sendMutation(InetAddress endpoint, MessageOut<?> message) throws WriteTimeoutException
     {
         IWriteResponseHandler responseHandler = WriteResponseHandler.create(endpoint);
         MessagingService.instance().sendRR(message, endpoint, responseHandler);
@@ -363,7 +364,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                     }
                     deleteHint(hostIdBytes, hint.name(), hint.maxTimestamp());
                 }
-                catch (TimedOutException e)
+                catch (WriteTimeoutException e)
                 {
                     logger.info(String.format("Timed out replaying hints to %s; aborting further deliveries", endpoint));
                     break delivery;

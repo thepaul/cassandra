@@ -23,7 +23,7 @@ import java.util.Map;
 import com.google.common.base.Charsets;
 import org.jboss.netty.buffer.ChannelBuffer;
 
-import org.apache.cassandra.config.ConfigurationException;
+import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.utils.Pair;
 
@@ -120,7 +120,7 @@ public enum DataType implements OptionCodec.Codecable<DataType>
             else
                 return entry.left.type;
         }
-        catch (ConfigurationException e)
+        catch (RequestValidationException e)
         {
             throw new ProtocolException(e.getMessage());
         }
